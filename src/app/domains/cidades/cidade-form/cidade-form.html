@@ -1,0 +1,64 @@
+<div class="p-4 sm:p-6 max-w-[900px] mx-auto">
+
+  <app-page-header [titulo]="modoEdicao() ? 'Editar cidade' : 'Nova cidade'" subtitulo="Dados cadastrais do município">
+    <a routerLink="/cidades" class="inline-flex items-center gap-2 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800">
+      Cancelar
+    </a>
+  </app-page-header>
+
+  <form [formGroup]="form" (ngSubmit)="salvar()" class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 sm:p-6 space-y-4">
+    <div class="grid sm:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Código do município (IBGE)</label>
+        <input type="number" formControlName="codigoMunicipio" placeholder="Ex: 5208707"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+        @if (form.controls.codigoMunicipio.invalid && form.controls.codigoMunicipio.touched) {
+          <p class="text-xs text-red-600 mt-1">Informe o código do município.</p>
+        }
+        @if (modoEdicao()) {
+          <p class="text-xs text-gray-400 mt-1">Definido pelo IBGE, não pode ser alterado.</p>
+        }
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">UF</label>
+        <input type="text" formControlName="uf" placeholder="GO" maxlength="2"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500 uppercase" />
+        @if (form.controls.uf.invalid && form.controls.uf.touched) {
+          <p class="text-xs text-red-600 mt-1">Informe a UF (2 letras).</p>
+        }
+        @if (modoEdicao()) {
+          <p class="text-xs text-gray-400 mt-1">Definida pelo IBGE, não pode ser alterada.</p>
+        }
+      </div>
+
+      <div class="sm:col-span-2">
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Nome</label>
+        <input type="text" formControlName="nome" placeholder="Ex: Goiânia"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+        @if (form.controls.nome.invalid && form.controls.nome.touched) {
+          <p class="text-xs text-red-600 mt-1">Informe o nome da cidade.</p>
+        }
+        @if (modoEdicao()) {
+          <p class="text-xs text-gray-400 mt-1">Definido pelo IBGE, não pode ser alterado.</p>
+        }
+      </div>
+    </div>
+
+    <div class="flex items-center justify-end gap-3 pt-2">
+      <a routerLink="/cidades" class="text-sm font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-4 py-2.5">Cancelar</a>
+      <button type="submit" [disabled]="carregando()"
+        class="inline-flex items-center gap-2 text-sm font-semibold bg-brand-600 text-white rounded-lg px-5 py-2.5 hover:bg-brand-700 disabled:opacity-60">
+        @if (carregando()) {
+          <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+          </svg>
+        } @else {
+          <app-icon name="check" class="size-4" />
+        }
+        Salvar cidade
+      </button>
+    </div>
+  </form>
+</div>

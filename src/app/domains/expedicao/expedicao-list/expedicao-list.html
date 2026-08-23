@@ -1,0 +1,622 @@
+<div class="p-4 sm:p-6 max-w-[1400px] mx-auto">
+
+  <app-page-header titulo="Expedição" subtitulo="Pedidos liberados para separação e conferência" />
+
+  <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+    <div class="p-4 border-b border-gray-100 dark:border-gray-800 space-y-3">
+      <!-- Ordem: busca (o que mais se usa), depois situação, e o resto atrás
+           do accordion — quem procura um pedido específico não passa por
+           nenhum filtro pra chegar lá. -->
+      <!-- Acima de 800px o período fica ao lado da busca; abaixo, embaixo dela
+           — lado a lado, os dois campos de data não cabem no coletor. -->
+      <div class="flex flex-col min-[800px]:flex-row min-[800px]:items-center gap-3">
+        <div class="relative flex-1 max-w-sm">
+          <div class="absolute inset-y-0 start-0 flex items-center pointer-events-none ps-3">
+            <app-icon name="search" class="size-4 text-gray-400 dark:text-gray-500" />
+          </div>
+          <input
+            type="text"
+            [ngModel]="termoBusca()"
+            (ngModelChange)="onBuscaChange($event)"
+            placeholder="Buscar por número ou cliente..."
+            class="py-2 ps-9 pe-3 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500"
+          />
+        </div>
+
+        <div class="flex items-center gap-2">
+          <label class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 shrink-0">Pedido de</label>
+          <input
+            type="date"
+            [ngModel]="dataInicio()"
+            (ngModelChange)="dataInicio.set($event); onPeriodoChange()"
+            class="py-2 px-2.5 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500"
+          />
+          <label class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 shrink-0">até</label>
+          <input
+            type="date"
+            [ngModel]="dataFim()"
+            (ngModelChange)="dataFim.set($event); onPeriodoChange()"
+            class="py-2 px-2.5 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500"
+          />
+        </div>
+
+        @if (temFiltroAtivo()) {
+          <button
+            type="button"
+            (click)="limparFiltros()"
+            class="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+          >
+            <app-icon name="x" class="size-4" />
+            Limpar
+          </button>
+        }
+      </div>
+
+      <!-- Cada botão responde a uma pergunta do dia a dia (ver FiltroSituacao
+           em expedicao.model.ts). Escolher recarrega do servidor: o recorte é
+           sobre a fila inteira, não sobre a página que está na tela.
+
+           Os botões não têm mais contagem. Ela vinha da página carregada, e com
+           o filtro no servidor mostraria "Em separação (50)" numa fila de 900 —
+           número errado é pior que número nenhum. A contagem certa exige uma
+           consulta de agregação própria, que ninguém pediu ainda. -->
+      <!-- Abaixo de 800px os botões quebram em várias linhas e empurram a lista
+           pra fora da tela — nessa faixa a mesma escolha vira um select. -->
+      <!-- Responsividade via styleClass, não via class: o host do p-select tem
+           [class]="cn(cx('root'), styleClass)", que sobrescreve o class estático. -->
+      <p-select
+        styleClass="w-full min-[800px]:hidden"
+        [options]="opcoes"
+        optionLabel="rotulo"
+        optionValue="chave"
+        [ngModel]="situacao()"
+        (ngModelChange)="onSituacaoChange($event)"
+        placeholder="Situação do pedido"
+        appendTo="body"
+      />
+
+      <div class="hidden min-[800px]:flex flex-wrap gap-2">
+        @for (opcao of opcoes; track opcao.chave) {
+          <button
+            type="button"
+            (click)="onSituacaoChange(opcao.chave)"
+            class="inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg border px-3 py-2"
+            [class]="
+              situacao() === opcao.chave
+                ? 'border-brand-600 bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300'
+                : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
+            "
+          >
+            {{ opcao.rotulo }}
+          </button>
+        }
+      </div>
+
+      <!-- Aberto ou fechado fica salvo em localStorage: é preferência de uso,
+           não estado de filtro (ver avancadosAbertos em expedicao-list.ts). -->
+      <p-accordion
+        [value]="avancadosAbertos() ? 'avancados' : null"
+        (valueChange)="avancadosAbertos.set($event === 'avancados')"
+      >
+        <p-accordion-panel value="avancados">
+          <p-accordion-header>
+            <span class="text-sm font-semibold">
+              Filtros avançados
+              @if (avancadosAtivos(); as ativos) {
+                <span class="ms-1.5 text-xs font-bold text-brand-700 dark:text-brand-300">({{ ativos }})</span>
+              }
+            </span>
+          </p-accordion-header>
+          <p-accordion-content>
+            <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+              <!-- Status do ERP: multiselect porque a pergunta real é quase
+                   sempre um conjunto ("PED e separado"), não um valor só. A
+                   escolha fica salva em localStorage — é o modo de trabalho da
+                   pessoa, não uma pergunta do momento (ver STORAGE_STATUS_PEDIDO).
+                   Diferente dos dois selects ao lado, este filtra no SERVIDOR:
+                   por isso as opções vêm do catálogo inteiro, não da página. -->
+              <p-multiselect
+                styleClass="w-full sm:w-64"
+                [options]="statusDisponiveis()"
+                optionLabel="rotulo"
+                optionValue="chave"
+                [ngModel]="statusPedido()"
+                (ngModelChange)="onStatusPedidoChange($event)"
+                [filter]="false"
+                [showToggleAll]="true"
+                placeholder="Todos os status do ERP"
+                selectedItemsLabel="{0} status"
+                [maxSelectedLabels]="2"
+                appendTo="body"
+              />
+
+              <select
+                [ngModel]="empresaId()"
+                (ngModelChange)="onEmpresaChange($event)"
+                class="py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500"
+              >
+                <option value="">Matriz e filiais</option>
+                @for (empresa of empresas(); track empresa.id) {
+                  <option [value]="empresa.id">{{ empresa.nome }}</option>
+                }
+              </select>
+
+              <!-- Desabilitado enquanto "somente os meus" está marcado: os dois
+                   controles dizem a mesma coisa (operador = alguém), e deixar
+                   escolher outra pessoa junto só permitiria pedir "os meus E os
+                   do João", que é sempre uma lista vazia. -->
+              <select
+                [ngModel]="operadorId()"
+                (ngModelChange)="onOperadorChange($event)"
+                [disabled]="somenteMeus()"
+                class="py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500 disabled:opacity-50"
+              >
+                <option value="">Todos os operadores</option>
+                @for (operador of operadores(); track operador.id) {
+                  <option [value]="operador.id">{{ operador.nome }}</option>
+                }
+              </select>
+
+              <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  [ngModel]="somenteMeus()"
+                  (ngModelChange)="onSomenteMeusChange($event)"
+                  class="rounded border-gray-300 dark:border-gray-700 text-brand-600 focus:ring-brand-500"
+                />
+                Somente os meus
+              </label>
+            </div>
+          </p-accordion-content>
+        </p-accordion-panel>
+      </p-accordion>
+    </div>
+
+    @if (carregando()) {
+      <div class="p-12 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm gap-2">
+        <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+        </svg>
+        Carregando pedidos...
+      </div>
+    } @else if (erro()) {
+      <div class="p-12 text-center text-red-600 text-sm">{{ erro() }}</div>
+    } @else if (pedidos().length === 0) {
+      <div class="p-12 text-center text-gray-400 dark:text-gray-500 text-sm">
+        @if (temFiltroAtivo()) {
+          Nenhum pedido nesse filtro.
+        } @else {
+          Nenhum pedido liberado para expedição.
+        }
+      </div>
+    } @else {
+      <!-- Abaixo de 800px a tabela não cabe e o botão "Abrir" ficava fora da
+           tela, exigindo rolagem horizontal. Nessa faixa cada pedido vira uma
+           lista de rótulo + valor, com as ações na última linha. -->
+      <div class="divide-y divide-gray-100 dark:divide-gray-800 min-[800px]:hidden">
+        @for (pedido of pedidos(); track pedido.pedidoId) {
+          <dl class="p-4 space-y-2 text-sm">
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Pedido</dt>
+              <dd>
+                <p class="font-semibold text-gray-800 dark:text-gray-100 font-mono">{{ numeroExibicao(pedido) }}</p>
+                <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ pedido.statusPedido }}</p>
+              </dd>
+            </div>
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Data</dt>
+              <dd class="text-gray-600 dark:text-gray-300">{{ pedido.dataPedido | date:'dd/MM/yyyy' }}</dd>
+            </div>
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Cliente</dt>
+              <dd class="min-w-0">
+                <p class="font-medium text-gray-700 dark:text-gray-200">{{ pedido.clienteNomeFantasia }}</p>
+                <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ pedido.clienteCnpj }}</p>
+              </dd>
+            </div>
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Cidade</dt>
+              <!-- Numa linha só aqui: empilhar UF embaixo custaria uma linha
+                   inteira da tela do coletor por dois caracteres. -->
+              <dd class="text-gray-600 dark:text-gray-300">{{ pedido.clienteCidadeNome }}/{{ pedido.clienteCidadeUf }}</dd>
+            </div>
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Itens</dt>
+              <dd class="text-gray-500 dark:text-gray-400">
+                {{ pedido.quantidadeItens }} {{ pedido.quantidadeItens === 1 ? 'item' : 'itens' }}
+                · {{ pedido.quantidadeTotal }} un
+              </dd>
+            </div>
+            @if (etapaAtual(pedido); as etapa) {
+              <!-- O rótulo é a própria etapa vigente — no coletor, uma linha a
+                   menos vale mais que a etapa que já passou. -->
+              <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+                <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">{{ rotuloTipo(etapa.tipo) }}</dt>
+                <dd>
+                  <!-- Faturado e embarque acontecem depois que o pedido sai
+                       daqui: quando um deles chega do ERP, é ele que descreve o
+                       pedido, mesmo com a etapa aberta (ver badgeStatusPedido). -->
+                  @if (badgeStatusPedido(pedido); as badge) {
+                    <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="badge.cor">
+                      {{ badge.rotulo }}
+                    </span>
+                  } @else {
+                    <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corSituacao(etapa.situacao)">
+                      {{ rotuloSituacao(etapa.situacao) }}
+                    </span>
+                  }
+                  @if (etapa.situacao.usuarioNome) {
+                    <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ etapa.situacao.usuarioNome }}</p>
+                  }
+                  <!-- No coletor o responsável é só informação: quem atribui
+                       faz isso no desktop. -->
+                  @if (atribuicaoAtual(pedido); as designado) {
+                    <p class="text-xs text-brand-700 dark:text-brand-300 mt-1">Designado: {{ designado.usuarioNome }}</p>
+                  }
+                </dd>
+              </div>
+            }
+            <!-- No card os três tempos viram uma linha só de rótulo + valor,
+                 como o resto: três colunas não cabem em 320px. -->
+            @if (tempoCiclo(pedido); as ciclo) {
+              <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+                <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">T. Liberação</dt>
+                <dd>
+                  <span class="inline-flex items-center text-xs font-semibold rounded-full px-2 py-0.5 tabular-nums" [class]="ciclo.emAndamento ? 'text-amber-700 bg-amber-50 dark:bg-amber-900/30' : 'text-gray-600 bg-gray-100 dark:bg-gray-800 dark:text-gray-300'">
+                    {{ ciclo.texto }}
+                  </span>
+                  <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 tabular-nums">{{ pedido.liberadoEm | date:'dd/MM/yyyy HH:mm:ss' }}</p>
+                </dd>
+              </div>
+            }
+            @if (tempoEtapa(pedido.separacao); as duracao) {
+              <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+                <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">T. Separação</dt>
+                <dd>
+                  <span class="inline-flex items-center text-xs font-semibold rounded-full px-2 py-0.5 tabular-nums" [class]="duracao.emAndamento ? 'text-amber-700 bg-amber-50 dark:bg-amber-900/30' : 'text-gray-600 bg-gray-100 dark:bg-gray-800 dark:text-gray-300'">
+                    {{ duracao.texto }}
+                  </span>
+                </dd>
+              </div>
+            }
+            @if (tempoEtapa(pedido.conferencia); as duracao) {
+              <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+                <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">T. Conferência</dt>
+                <dd>
+                  <span class="inline-flex items-center text-xs font-semibold rounded-full px-2 py-0.5 tabular-nums" [class]="duracao.emAndamento ? 'text-amber-700 bg-amber-50 dark:bg-amber-900/30' : 'text-gray-600 bg-gray-100 dark:bg-gray-800 dark:text-gray-300'">
+                    {{ duracao.texto }}
+                  </span>
+                </dd>
+              </div>
+            }
+            <div class="pt-1">
+              <a
+                [routerLink]="['/expedicao', pedido.pedidoId]"
+                class="w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-brand-700 dark:text-brand-300 border border-brand-600 rounded-lg px-3 py-2.5 hover:bg-brand-50 dark:hover:bg-brand-900/30"
+              >
+                Abrir
+                <app-icon name="chevron-right" class="size-4" />
+              </a>
+            </div>
+          </dl>
+        }
+      </div>
+
+      <!-- Barra de ação em lote: aparece só quando há algo marcado, para não
+           ocupar altura permanente numa tela que é lista. -->
+      @if (podeAtribuir() && selecionados().size > 0) {
+        <div class="hidden min-[800px]:flex items-center gap-3 px-5 py-3 bg-brand-50 dark:bg-brand-900/20 border-b border-brand-100 dark:border-brand-900">
+          <p class="text-sm font-semibold text-brand-800 dark:text-brand-200">
+            {{ selecionados().size }} {{ selecionados().size === 1 ? 'pedido selecionado' : 'pedidos selecionados' }}
+          </p>
+          <div class="ms-auto flex items-center gap-2">
+            <button
+              type="button"
+              (click)="abrirAtribuicao('separacao')"
+              class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-700 dark:text-brand-300 border border-brand-600 rounded-lg px-3 py-2 hover:bg-brand-100 dark:hover:bg-brand-900/40"
+            >
+              <app-icon name="contacts" class="size-4" />
+              Atribuir separação
+            </button>
+            <button
+              type="button"
+              (click)="abrirAtribuicao('conferencia')"
+              class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-700 dark:text-brand-300 border border-brand-600 rounded-lg px-3 py-2 hover:bg-brand-100 dark:hover:bg-brand-900/40"
+            >
+              <app-icon name="contacts" class="size-4" />
+              Atribuir conferência
+            </button>
+            <button
+              type="button"
+              (click)="limparSelecao()"
+              class="text-sm font-semibold text-gray-500 dark:text-gray-400 px-2 py-2 hover:text-gray-700 dark:hover:text-gray-200"
+            >
+              Limpar seleção
+            </button>
+          </div>
+        </div>
+      }
+
+      <div class="hidden min-[800px]:block overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-100 dark:divide-gray-800">
+          <thead class="bg-gray-50 dark:bg-gray-800/60">
+            <tr>
+              <!-- Checkbox só no desktop: abaixo de 800px a grid vira card e o
+                   alvo é o coletor — atribuir é trabalho de coordenador. -->
+              @if (podeAtribuir()) {
+                <th class="ps-5 pe-2 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    [checked]="todosSelecionados()"
+                    (change)="alternarTodos()"
+                    [attr.aria-label]="'Selecionar todos os pedidos desta página'"
+                    class="rounded border-gray-300 dark:border-gray-700 text-brand-600 focus:ring-brand-500"
+                  />
+                </th>
+              }
+              <!-- Apelido da empresa emissora, não o nome fantasia: a coluna é
+                   estreita e o que se precisa aqui é distinguir matriz de
+                   filial de relance. O nome completo fica no `title`. -->
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Emp</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer select-none" (click)="ordenarPor('numero')" [title]="'Ordenar por Pedido'">
+                Pedido <span [class]="corSeta('numero')">{{ setaDe('numero') }}</span>
+              </th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer select-none" (click)="ordenarPor('data_pedido')" [title]="'Ordenar por Data'">
+                Data <span [class]="corSeta('data_pedido')">{{ setaDe('data_pedido') }}</span>
+              </th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer select-none" (click)="ordenarPor('cliente_nome_fantasia')" [title]="'Ordenar por Cliente'">
+                Cliente <span [class]="corSeta('cliente_nome_fantasia')">{{ setaDe('cliente_nome_fantasia') }}</span>
+              </th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Cidade</th>
+              <!-- Ordena pela quantidade de LINHAS do pedido, que é o primeiro
+                   número da célula. -->
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer select-none" (click)="ordenarPor('quantidade_itens')" title="Ordenar por quantidade de itens">
+                Itens <span [class]="corSeta('quantidade_itens')">{{ setaDe('quantidade_itens') }}</span>
+              </th>
+              <!-- Uma coluna só: a etapa que vale agora (ver etapaAtual em
+                   expedicao-list.ts). O nome da etapa vai dentro da célula,
+                   porque muda de linha para linha. -->
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Etapa</th>
+              <!-- Cidade, Itens, Etapa e os tempos das etapas NÃO são
+                   ordenáveis: cidade vem do cadastro vivo do cliente, itens é
+                   contagem, e o andamento mora nas tabelas da expedição —
+                   nenhum sai da consulta paginada de pedidos. Cabeçalho sem
+                   seta é sinal de que ali não ordena, e é melhor assim do que
+                   ordenar só a página e parecer que funcionou. -->
+              <!-- Os três tempos, lado a lado: liberação (ciclo do pedido),
+                   separação e conferência. Cada um mostra o instante em que
+                   começou, a duração num badge, e quando fechou. -->
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer select-none" (click)="ordenarPor('liberado_em')" [title]="'Ordenar por T. Liberação'">
+                T. Liberação <span [class]="corSeta('liberado_em')">{{ setaDe('liberado_em') }}</span>
+              </th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">T. Separação</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">T. Conferência</th>
+              <th class="px-5 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Ações</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+            @for (pedido of pedidos(); track pedido.pedidoId) {
+              <tr class="hover:bg-gray-50/60 dark:hover:bg-gray-800/40" [class.bg-brand-50/60]="estaSelecionado(pedido.pedidoId)">
+                @if (podeAtribuir()) {
+                  <td class="ps-5 pe-2 py-3.5">
+                    <input
+                      type="checkbox"
+                      [checked]="estaSelecionado(pedido.pedidoId)"
+                      (change)="alternarSelecao(pedido.pedidoId)"
+                      [attr.aria-label]="'Selecionar pedido ' + numeroExibicao(pedido)"
+                      class="rounded border-gray-300 dark:border-gray-700 text-brand-600 focus:ring-brand-500"
+                    />
+                  </td>
+                }
+                <!-- Sem apelido cadastrado cai no nome fantasia: melhor a
+                     coluna ficar larga numa linha do que vazia. -->
+                <td class="px-5 py-3.5">
+                  <span
+                    class="text-sm font-medium text-gray-700 dark:text-gray-200"
+                    [title]="pedido.empresaNome"
+                  >{{ pedido.empresaApelido || pedido.empresaNome }}</span>
+                </td>
+                <td class="px-5 py-3.5">
+                  <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 font-mono">{{ numeroExibicao(pedido) }}</p>
+                  <!-- Status do ERP, no mesmo peso do CNPJ na coluna do cliente. -->
+                  <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ pedido.statusPedido }}</p>
+                </td>
+                <td class="px-5 py-3.5 text-sm text-gray-600 dark:text-gray-300">{{ pedido.dataPedido | date:'dd/MM/yyyy' }}</td>
+                <td class="px-5 py-3.5">
+                  <p class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ pedido.clienteNomeFantasia }}</p>
+                  <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ pedido.clienteCnpj }}</p>
+                </td>
+                <td class="px-5 py-3.5">
+                  <p class="text-sm text-gray-600 dark:text-gray-300">{{ pedido.clienteCidadeNome }}</p>
+                  <p class="text-xs text-gray-400 dark:text-gray-500">{{ pedido.clienteCidadeUf }}</p>
+                </td>
+                <td class="px-5 py-3.5 text-sm text-gray-500 dark:text-gray-400">
+                  {{ pedido.quantidadeItens }} {{ pedido.quantidadeItens === 1 ? 'item' : 'itens' }}
+                  <span class="text-gray-400 dark:text-gray-500">· {{ pedido.quantidadeTotal }} un</span>
+                </td>
+                @if (etapaAtual(pedido); as etapa) {
+                  <td class="px-5 py-3.5">
+                    <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">{{ rotuloTipo(etapa.tipo) }}</p>
+                    <!-- Ver o mesmo bloco no card acima: FAT e EMB vêm do ERP
+                         depois que o pedido saiu, e valem mais que a etapa. -->
+                    @if (badgeStatusPedido(pedido); as badge) {
+                      <span class="mt-1 inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="badge.cor">
+                        {{ badge.rotulo }}
+                      </span>
+                    } @else {
+                      <span class="mt-1 inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corSituacao(etapa.situacao)">
+                        {{ rotuloSituacao(etapa.situacao) }}
+                      </span>
+                    }
+                    @if (etapa.situacao.usuarioNome) {
+                      <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ etapa.situacao.usuarioNome }}</p>
+                    }
+                    <!-- Responsável designado. O `x` remove direto na linha: é
+                         o caso comum (corrigir um engano) e não vale exigir
+                         selecionar + abrir diálogo pra isso. -->
+                    @if (atribuicaoAtual(pedido); as designado) {
+                      <p class="text-xs text-brand-700 dark:text-brand-300 mt-1 inline-flex items-center gap-1">
+                        <app-icon name="contacts" class="size-3.5" />
+                        {{ designado.usuarioNome }}
+                        @if (podeAtribuir()) {
+                          <button
+                            type="button"
+                            (click)="removerAtribuicao(pedido.pedidoId, etapa.tipo)"
+                            class="text-gray-400 hover:text-red-600"
+                            [title]="'Remover atribuição de ' + designado.usuarioNome"
+                          >
+                            <app-icon name="x" class="size-3.5" />
+                          </button>
+                        }
+                      </p>
+                    }
+                  </td>
+                }
+                <!-- T. Liberação: o marco e o ciclo do pedido a partir dele.
+                     Badge âmbar quando ainda está correndo. -->
+                <td class="px-5 py-3.5 whitespace-nowrap">
+                  @if (pedido.liberadoEm) {
+                    <p class="text-xs text-gray-600 dark:text-gray-300 tabular-nums">{{ pedido.liberadoEm | date:'dd/MM/yyyy HH:mm:ss' }}</p>
+                    @if (tempoCiclo(pedido); as ciclo) {
+                      <span class="mt-1 inline-flex items-center text-xs font-semibold rounded-full px-2 py-0.5 tabular-nums" [class]="ciclo.emAndamento ? 'text-amber-700 bg-amber-50 dark:bg-amber-900/30' : 'text-gray-600 bg-gray-100 dark:bg-gray-800 dark:text-gray-300'">
+                        {{ ciclo.texto }}
+                      </span>
+                    }
+                  } @else {
+                    <span class="text-xs text-gray-400 dark:text-gray-500">—</span>
+                  }
+                </td>
+
+                @for (etapa of [pedido.separacao, pedido.conferencia]; track $index) {
+                  <td class="px-5 py-3.5 whitespace-nowrap">
+                    @if (etapa.dataPrimeiroBipe) {
+                      <p class="text-xs text-gray-600 dark:text-gray-300 tabular-nums">{{ etapa.dataPrimeiroBipe | date:'dd/MM/yyyy HH:mm:ss' }}</p>
+                      @if (tempoEtapa(etapa); as duracao) {
+                        <span class="mt-1 inline-flex items-center text-xs font-semibold rounded-full px-2 py-0.5 tabular-nums" [class]="duracao.emAndamento ? 'text-amber-700 bg-amber-50 dark:bg-amber-900/30' : 'text-gray-600 bg-gray-100 dark:bg-gray-800 dark:text-gray-300'">
+                          {{ duracao.texto }}
+                        </span>
+                      }
+                      @if (etapa.dataFim) {
+                        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500 tabular-nums">{{ etapa.dataFim | date:'dd/MM/yyyy HH:mm:ss' }}</p>
+                      }
+                    } @else {
+                      <span class="text-xs text-gray-400 dark:text-gray-500">—</span>
+                    }
+                  </td>
+                }
+
+                <td class="px-5 py-3.5">
+                  <div class="flex items-center justify-end">
+                    <a
+                      [routerLink]="['/expedicao', pedido.pedidoId]"
+                      class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 dark:text-brand-400 rounded-lg px-3 py-2 hover:bg-brand-50 dark:hover:bg-brand-900/30"
+                    >
+                      Abrir
+                      <app-icon name="chevron-right" class="size-4" />
+                    </a>
+                  </div>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Paginação no banco: são centenas de milhares de pedidos, e carregar
+           tudo (ou acumular páginas em memória) derruba o coletor. -->
+      <div class="p-4 border-t border-gray-100 dark:border-gray-800 flex flex-col sm:flex-row sm:items-center gap-3">
+        <p class="text-xs text-gray-500 dark:text-gray-400">
+          Página {{ pagina() }} de {{ totalPaginas() }} · {{ total() }} {{ total() === 1 ? 'pedido' : 'pedidos' }} no período
+        </p>
+        <div class="sm:ms-auto flex items-center gap-2">
+          <label class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Por página</label>
+          <select
+            [ngModel]="porPagina()"
+            (ngModelChange)="onPorPaginaChange($event)"
+            class="py-2 px-2.5 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500"
+          >
+            @for (opcao of opcoesPorPagina; track opcao) {
+              <option [ngValue]="opcao">{{ opcao }}</option>
+            }
+          </select>
+          <button
+            type="button"
+            (click)="irParaPagina(pagina() - 1)"
+            [disabled]="pagina() <= 1 || carregando()"
+            class="inline-flex items-center gap-1.5 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
+          >
+            <app-icon name="chevron-left" class="size-4" />
+            Anterior
+          </button>
+          <button
+            type="button"
+            (click)="irParaPagina(pagina() + 1)"
+            [disabled]="pagina() >= totalPaginas() || carregando()"
+            class="inline-flex items-center gap-1.5 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
+          >
+            Próxima
+            <app-icon name="chevron-right" class="size-4" />
+          </button>
+        </div>
+      </div>
+    }
+  </div>
+
+  <!-- Diálogo de atribuição. "Sem responsável" é a primeira opção da lista, e
+       não um segundo botão: desatribuir é um VALOR do campo responsável, do
+       mesmo jeito que "Unassigned" nas ferramentas de tarefa. -->
+  @if (atribuindo(); as tipo) {
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div class="w-full max-w-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
+        <h2 class="font-semibold text-gray-800 dark:text-gray-100">Atribuir {{ rotuloTipo(tipo).toLowerCase() }}</h2>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+          {{ selecionados().size }} {{ selecionados().size === 1 ? 'pedido' : 'pedidos' }} · o operador
+          passa a ver esses pedidos na tela dele.
+        </p>
+
+        @if (erroAtribuicao()) {
+          <div class="mt-3 flex items-start gap-2 text-sm text-red-700 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900 rounded-lg p-3">
+            <app-icon name="alert" class="size-4 mt-0.5 shrink-0" />
+            <span>{{ erroAtribuicao() }}</span>
+          </div>
+        }
+
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1.5 mt-4">Responsável</label>
+        <select
+          [ngModel]="operadorEscolhido()"
+          (ngModelChange)="operadorEscolhido.set($event)"
+          class="py-2.5 px-3 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500"
+        >
+          <option [ngValue]="null">— Sem responsável —</option>
+          @for (operador of operadoresDisponiveis(); track operador.id) {
+            <option [ngValue]="operador.id">{{ operador.nome }}</option>
+          }
+        </select>
+        <!-- A lista já vem filtrada do backend por quem pode executar a etapa:
+             atribuir a quem não pode separar criaria trabalho impossível. -->
+        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+          Só aparecem operadores com permissão de executar {{ rotuloTipo(tipo).toLowerCase() }}.
+        </p>
+
+        <div class="flex items-center gap-2 mt-5">
+          <button
+            type="button"
+            (click)="atribuindo.set(null)"
+            class="flex-1 text-sm font-semibold text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            (click)="confirmarAtribuicao()"
+            [disabled]="atribuindoOcupado()"
+            class="flex-1 text-sm font-semibold bg-brand-600 text-white rounded-lg px-3 py-2.5 hover:bg-brand-700 disabled:opacity-40"
+          >
+            {{ operadorEscolhido() ? 'Atribuir' : 'Remover responsável' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+</div>

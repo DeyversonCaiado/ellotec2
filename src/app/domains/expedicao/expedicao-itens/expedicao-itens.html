@@ -1,0 +1,111 @@
+<!-- Coletor 800×480: uma coluna, sem tabela, alvos de toque grandes. -->
+<div class="p-3 sm:p-5 max-w-[900px] mx-auto pb-24">
+
+  @if (carregando()) {
+    <div class="p-10 text-center text-gray-400 dark:text-gray-500 text-sm">Carregando itens...</div>
+  } @else if (processo(); as proc) {
+
+    <div class="flex items-center gap-3 mb-4">
+      <a [routerLink]="['/expedicao', pedidoId]" class="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800" title="Voltar">
+        <app-icon name="arrow-left" class="size-6" />
+      </a>
+      <div class="min-w-0">
+        <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">{{ rotuloTipo(proc.tipo) }}</p>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-50 font-mono truncate">{{ proc.pedidoNumero }}</h1>
+      </div>
+      <span class="ms-auto shrink-0 text-sm font-semibold text-gray-500 dark:text-gray-400">
+        {{ finalizados() }}/{{ proc.itens.length }}
+      </span>
+    </div>
+
+    @if (erro()) {
+      <div class="mb-3 flex items-start gap-2 text-sm text-red-700 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900 rounded-lg p-3">
+        <app-icon name="alert" class="size-4 mt-0.5 shrink-0" />
+        <span>{{ erro() }}</span>
+      </div>
+    }
+
+    @if (emAndamento(); as atual) {
+      <div class="mb-3 text-sm text-brand-800 dark:text-brand-200 bg-brand-50 dark:bg-brand-900/20 border border-brand-200 dark:border-brand-800 rounded-lg p-3">
+        Item em andamento: <strong>{{ atual.produtoDescricao }}</strong>. Finalize-o antes de começar outro.
+      </div>
+    }
+
+    <div class="space-y-2.5">
+      @for (item of proc.itens; track item.pedidoItemId) {
+        <button
+          type="button"
+          (click)="abrirItem(item)"
+          [disabled]="item.situacao === 'finalizado' || bloqueado(item) || abrindoItem() === item.pedidoItemId"
+          class="w-full text-start border rounded-xl p-3.5 bg-white dark:bg-gray-900 disabled:opacity-60"
+          [class]="corItem(item)"
+        >
+          <div class="flex items-start gap-3">
+            <div class="min-w-0 flex-1">
+              <p class="text-base font-semibold text-gray-800 dark:text-gray-100 leading-snug">{{ item.produtoDescricao }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5">
+                {{ item.produtoCodigo }}
+                @if (item.enderecoProduto) { · {{ item.enderecoProduto }} }
+                @if (item.lote) { · Lote {{ item.lote }} }
+              </p>
+              <!-- Abaixo do lote e do mesmo tamanho: continua sendo a linha de
+                   identificação do produto, só que a que o operador confere
+                   contra o que está impresso na caixa. -->
+              @if (item.produtoMarcaNome) {
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ item.produtoMarcaNome }}</p>
+              }
+              @if (item.produtoCodigoBarraNotas || item.produtoCodigosBarrasLogistica.length || item.produtoDun14) {
+                <p class="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5">
+                  @if (item.produtoCodigoBarraNotas) { Nota {{ item.produtoCodigoBarraNotas }} }
+                  @for (codigo of item.produtoCodigosBarrasLogistica; track codigo) { · Log {{ codigo }} }
+                  @if (item.produtoDun14) { · DUN {{ item.produtoDun14 }} }
+                </p>
+              }
+              <!-- Fora da linha de cima de propósito: aquela é identificação do
+                   item, esta é quanto vale cada leitura no leitor. -->
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Múltiplo de venda: {{ item.quantidadeMultiplaVenda }} un
+              </p>
+            </div>
+            <p class="shrink-0 text-lg font-bold text-gray-800 dark:text-gray-100 tabular-nums">
+              {{ item.quantidadeProcessada }}/{{ item.quantidadePedida }}
+            </p>
+          </div>
+
+          <!-- A ação fica embaixo e centralizada: no coletor o polegar alcança
+               o centro da linha, não o canto direito dela. -->
+          <div class="mt-3 flex justify-center">
+            @if (item.situacao === 'finalizado') {
+              <span class="inline-flex items-center gap-1.5 text-sm font-semibold" [class.text-amber-700]="item.divergente" [class.text-emerald-700]="!item.divergente">
+                <app-icon [name]="item.divergente ? 'alert' : 'check'" class="size-4" />
+                {{ item.divergente ? 'Finalizado com falta' : 'Finalizado' }}
+              </span>
+            } @else {
+              <span class="inline-flex items-center justify-center gap-2 text-sm font-semibold text-brand-700 dark:text-brand-300 border border-brand-600 rounded-lg px-6 py-2.5">
+                <app-icon name="barcode" class="size-4" />
+                {{ item.situacao === 'em_andamento' ? 'Continuar' : 'Iniciar' }}
+              </span>
+            }
+          </div>
+        </button>
+      }
+    </div>
+
+    @if (proc.status === 'finalizada') {
+      <div class="fixed inset-x-0 bottom-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 p-3">
+        <div class="max-w-[900px] mx-auto">
+          <a
+            [routerLink]="['/expedicao', pedidoId]"
+            class="w-full inline-flex items-center justify-center gap-2 text-base font-semibold bg-emerald-600 text-white rounded-lg px-4 py-3.5 hover:bg-emerald-700"
+          >
+            <app-icon name="check" class="size-5" />
+            {{ rotuloTipo(proc.tipo) }} concluída — voltar ao pedido
+          </a>
+        </div>
+      </div>
+    }
+
+  } @else {
+    <div class="p-10 text-center text-red-600 text-sm">{{ erro() ?? 'Processo não encontrado.' }}</div>
+  }
+</div>

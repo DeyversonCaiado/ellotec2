@@ -1,0 +1,274 @@
+<div class="h-screen flex bg-gray-50 dark:bg-gray-950 overflow-hidden">
+
+  <!-- ============ MENU — TELAS LARGAS ============
+       Rail de 64px que reserva o espaço no layout; o painel de verdade é
+       absoluto e cresce POR CIMA do conteúdo ao expandir. Assim a tela não
+       "pula" a cada hover, que é o defeito de expandir empurrando. -->
+  @if (!ehEstreito()) {
+    <aside
+      class="relative w-16 shrink-0"
+      (mouseenter)="menuHover.set(true)"
+      (mouseleave)="menuHover.set(false)"
+    >
+      <div
+        class="absolute inset-y-0 start-0 bg-white dark:bg-gray-900 border-e border-gray-200 dark:border-gray-800 flex flex-col overflow-hidden transition-all duration-200 z-40"
+        [class.w-16]="!menuVisivelExpandido()"
+        [class.w-72]="menuVisivelExpandido()"
+        [class.shadow-xl]="menuVisivelExpandido()"
+      >
+        <ng-container *ngTemplateOutlet="menu; context: { compacto: !menuVisivelExpandido() }" />
+      </div>
+    </aside>
+
+    <!-- Backdrop só quando a expansão foi presa por clique. No hover ele
+         atrapalharia: o ponteiro sai do menu e cairia sobre a máscara. -->
+    @if (menuExpandido()) {
+      <div class="fixed inset-0 bg-black/30 z-30" (click)="menuExpandido.set(false)"></div>
+    }
+  }
+
+  <!-- ============ MENU — TELAS ESTREITAS ============
+       Offcanvas com máscara, sem modo ícone: em 320px de largura um rail de
+       64px comeria 20% da tela sem mostrar rótulo nenhum. -->
+  @if (ehEstreito()) {
+    <!-- `#headless` troca header e conteúdo do drawer pelo template inteiro:
+         sem ele sobram o botão de fechar e o padding próprios do componente,
+         que desalinham o menu em relação ao rail das telas largas. -->
+    <p-drawer [(visible)]="drawerAberto" position="left" styleClass="!w-72">
+      <ng-template #headless>
+        <ng-container *ngTemplateOutlet="menu; context: { compacto: false }" />
+      </ng-template>
+    </p-drawer>
+  }
+
+  <!-- ============ COLUNA PRINCIPAL ============ -->
+  <div class="flex-1 flex flex-col min-w-0">
+
+    <!-- TOPBAR -->
+    <header class="h-16 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center gap-x-2 px-4 shrink-0">
+      <button (click)="alternarSidebar()" title="Menu" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
+        <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" />
+        </svg>
+      </button>
+
+      <div class="h-6 w-px bg-gray-200 dark:bg-gray-700 mx-1 hidden sm:block"></div>
+
+      <button class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hidden sm:inline-flex">
+        <app-icon name="calendar" class="size-[18px]" />
+      </button>
+      <button class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hidden sm:inline-flex">
+        <app-icon name="mail" class="size-[18px]" />
+      </button>
+      <button class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hidden sm:inline-flex">
+        <app-icon name="contacts" class="size-[18px]" />
+      </button>
+      <button class="p-2 rounded-lg text-amber-500 hover:bg-gray-100 dark:hover:bg-gray-800 hidden sm:inline-flex">
+        <app-icon name="star" class="size-[18px]" />
+      </button>
+
+      <div class="flex-1"></div>
+
+      <div class="hidden md:flex items-center gap-1 text-xs font-semibold text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700 rounded-md px-2 py-1 me-2">
+        🇧🇷 PT
+      </div>
+      <button class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hidden md:inline-flex">
+        <app-icon name="search" class="size-[18px]" />
+      </button>
+      <button class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hidden md:inline-flex relative">
+        <app-icon name="bell" class="size-[18px]" />
+        <span class="absolute top-1.5 right-1.5 size-2 bg-brand-600 rounded-full ring-2 ring-white dark:ring-gray-900"></span>
+      </button>
+
+      <button
+        (click)="alternarTema()"
+        title="Alternar modo claro/escuro"
+        class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 inline-flex"
+      >
+        @if (tema() === 'escuro') {
+          <app-icon name="sun" class="size-[18px]" />
+        } @else {
+          <app-icon name="moon" class="size-[18px]" />
+        }
+      </button>
+
+      <button (click)="alternarPainelEquipe()" class="ms-2 p-2 rounded-lg text-white bg-brand-600 hover:bg-brand-700 lg:hidden">
+        <app-icon name="users" class="size-[18px]" />
+      </button>
+    </header>
+
+    <!-- CONTEÚDO + PAINEL DE EQUIPE -->
+    <div class="flex-1 flex min-h-0">
+      <main class="flex-1 overflow-y-auto">
+        <router-outlet />
+      </main>
+
+      <!-- PAINEL DE EQUIPE (direita) -->
+      <aside
+        class="bg-brand-700 dark:bg-gray-900 shrink-0 overflow-y-auto transition-all duration-200 hidden lg:block"
+        [class.w-16]="painelEquipeAberto"
+        [class.w-0]="!painelEquipeAberto"
+      >
+        <div class="w-16 flex flex-col items-center py-4 gap-3">
+          <button class="size-9 rounded-lg bg-white/15 text-white flex items-center justify-center hover:bg-white/25">
+            <app-icon name="message" class="size-4" />
+          </button>
+          @for (membro of equipeFicticia; track $index) {
+            <div class="relative">
+              <div class="size-9 rounded-full bg-white/20 text-white text-xs font-semibold flex items-center justify-center">
+                {{ membro.iniciais }}
+              </div>
+              @if (membro.online) {
+                <span class="absolute -bottom-0.5 -right-0.5 size-2.5 bg-emerald-400 rounded-full ring-2 ring-brand-700 dark:ring-gray-900"></span>
+              }
+            </div>
+          }
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CONTEÚDO DO MENU ============
+     Um template só, usado pelo rail e pelo drawer. `compacto` controla o modo
+     ícone: sem rótulos, sem títulos de seção, sem card de ajuda. -->
+<ng-template #menu let-compacto="compacto">
+  <div class="h-full flex flex-col" [class.w-72]="!compacto" [class.w-16]="compacto">
+
+    <!-- Logo -->
+    <div class="h-16 flex items-center gap-2 shrink-0" [class.px-5]="!compacto" [class.justify-center]="compacto">
+      <div class="size-8 flex items-center justify-center rounded-lg bg-brand-600 text-white shrink-0">
+        <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2 2 7l10 5 10-5-10-5Z" stroke-linejoin="round" />
+          <path d="M2 17l10 5 10-5M2 12l10 5 10-5" stroke-linejoin="round" />
+        </svg>
+      </div>
+      @if (!compacto) {
+        <div class="leading-tight">
+          <p class="font-bold text-gray-900 dark:text-gray-50 text-sm">ELLOTEC</p>
+          <p class="text-[11px] text-gray-400 dark:text-gray-500 -mt-0.5">Painel administrativo</p>
+        </div>
+      }
+    </div>
+
+    <!-- Menu — 3 níveis: seção (cabeçalho fixo) > grupo (acordeão) > item -->
+    <nav class="flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4" [class.space-y-4]="!compacto" [class.space-y-2]="compacto">
+      @for (secao of secoesMenu(); track secao.titulo) {
+        <div>
+          <!-- Cabeçalho da seção: fixo, não colapsa. Some no modo ícone, onde
+               não há largura pra rótulo nenhum. -->
+          @if (!compacto) {
+            <div class="px-2.5 pt-3 pb-1.5">
+              <p class="text-xs font-semibold text-brand-600 dark:text-brand-400">{{ secao.titulo }}</p>
+              @if (secao.subtitulo) {
+                <p class="text-[11px] text-gray-400 dark:text-gray-500">{{ secao.subtitulo }}</p>
+              }
+            </div>
+          }
+
+          @for (grupo of secao.grupos; track $index) {
+            <div>
+              <!-- Cabeçalho do grupo: acordeão, só em modo largo e só em grupo
+                   com título. No modo ícone os itens viram lista plana — sem
+                   rótulo, um acordeão não teria como mostrar seu estado. -->
+              @if (!compacto && grupo.titulo) {
+                <button
+                  type="button"
+                  (click)="alternarGrupo(grupo)"
+                  [attr.aria-expanded]="grupoAberto(grupo)"
+                  class="w-full flex items-center gap-x-2 px-2.5 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition"
+                >
+                  <span class="flex-1 text-start text-[13px] font-semibold text-gray-700 dark:text-gray-200">{{ grupo.titulo }}</span>
+                  <app-icon
+                    name="chevron-down"
+                    class="size-3.5 shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-200"
+                    [class.-rotate-90]="!grupoAberto(grupo)"
+                  />
+                </button>
+              }
+
+              @if (compacto || grupoAberto(grupo)) {
+                <ul class="space-y-0.5" [class.ps-2]="!compacto && grupo.titulo">
+                  @for (item of grupo.itens; track item.rotulo) {
+                    <li>
+                      @if (item.rota) {
+                        <a
+                          [routerLink]="item.rota"
+                          (click)="recolherMenu()"
+                          routerLinkActive="bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300"
+                          [routerLinkActiveOptions]="{ exact: item.rota === '/' }"
+                          [title]="item.rotulo"
+                          class="flex items-center gap-x-3 py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-100 transition"
+                          [class.px-2.5]="!compacto"
+                          [class.justify-center]="compacto"
+                        >
+                          <app-icon [name]="item.icone" class="size-[18px] shrink-0" />
+                          @if (!compacto) {
+                            <span class="flex-1 truncate">{{ item.rotulo }}</span>
+                            @if (item.badge) {
+                              <span class="text-[10px] font-semibold bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-full px-1.5 py-0.5">{{ item.badge }}</span>
+                            }
+                          }
+                        </a>
+                      } @else {
+                        <div
+                          class="flex items-center gap-x-3 py-2 rounded-lg text-sm font-medium text-gray-400 dark:text-gray-600 cursor-not-allowed select-none"
+                          [class.px-2.5]="!compacto"
+                          [class.justify-center]="compacto"
+                          [title]="compacto ? item.rotulo : 'Recurso ilustrativo — não implementado'"
+                        >
+                          <app-icon [name]="item.icone" class="size-[18px] shrink-0" />
+                          @if (!compacto) {
+                            <span class="flex-1 truncate">{{ item.rotulo }}</span>
+                            @if (item.novo) {
+                              <span class="text-[10px] font-semibold bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 rounded-full px-1.5 py-0.5">NOVO</span>
+                            }
+                            @if (item.badge) {
+                              <span class="text-[10px] font-semibold bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 rounded-full px-1.5 py-0.5">{{ item.badge }}</span>
+                            }
+                          }
+                        </div>
+                      }
+                    </li>
+                  }
+                </ul>
+              }
+            </div>
+          }
+        </div>
+      }
+    </nav>
+
+    <!-- Card de ajuda: só faz sentido com largura para o texto, e no coletor
+         (320x453) os ~90px dele fazem falta pra lista de módulos. -->
+    @if (!compacto && !ehEstreito()) {
+      <div class="mx-3 mb-3 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 p-4 shrink-0">
+        <p class="text-sm font-semibold text-gray-800 dark:text-gray-100">Precisa de ajuda para começar?</p>
+        <a href="#" class="text-xs font-medium text-brand-600 dark:text-brand-400 inline-flex items-center gap-1 mt-1 hover:underline">
+          Ver documentação
+          <app-icon name="chevron-right" class="size-3" />
+        </a>
+      </div>
+    }
+
+    <!-- Usuário -->
+    <div
+      class="flex items-center gap-x-3 py-3 border-t border-gray-100 dark:border-gray-800 shrink-0"
+      [class.px-4]="!compacto"
+      [class.justify-center]="compacto"
+    >
+      <div class="size-9 rounded-full bg-brand-600 text-white flex items-center justify-center text-sm font-semibold shrink-0" [title]="usuario()?.nome ?? ''">
+        {{ (usuario()?.nome ?? '?').charAt(0) }}
+      </div>
+      @if (!compacto) {
+        <div class="min-w-0 flex-1">
+          <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">{{ usuario()?.nome }}</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 truncate">{{ usuario()?.email }}</p>
+        </div>
+        <button (click)="sair()" title="Sair" class="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800">
+          <app-icon name="logout" class="size-[18px]" />
+        </button>
+      }
+    </div>
+  </div>
+</ng-template>

@@ -1,0 +1,196 @@
+<!-- Coletor 800×480: uma coluna, campos altos, ação principal fixa no rodapé. -->
+<div class="p-3 sm:p-5 max-w-[900px] mx-auto pb-28">
+
+  @if (carregando()) {
+    <div class="p-10 text-center text-gray-400 dark:text-gray-500 text-sm">Carregando item...</div>
+  } @else if (item(); as it) {
+
+    <div class="flex items-center gap-3 mb-3">
+      <a
+        [routerLink]="['/expedicao', pedidoId, tipo, processoId]"
+        class="text-sm font-semibold text-brand-600 dark:text-brand-400 hover:underline"
+      >
+        Voltar
+      </a>
+      <p class="ms-auto text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">{{ rotuloTipo(tipo) }}</p>
+    </div>
+
+    @if (erro()) {
+      <div class="mb-3 text-base font-semibold text-red-700 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900 rounded-lg p-3">
+        <div class="flex items-start gap-2">
+          <app-icon name="alert" class="size-5 mt-0.5 shrink-0" />
+          <span>{{ erro() }}</span>
+        </div>
+        <!-- O código lido não está no cadastro. A correção é no cadastro do
+             produto (seção "código de barras logística"), não daqui: o produto
+             tem vários códigos agora, e escolher qual sobrescrever no meio da
+             contagem era exatamente o que dava errado. -->
+        @if (produtoNaoReconhecido()) {
+          <!-- Antes de mandar cadastrar à mão, vale perguntar à fonte oficial:
+               se o código impresso na caixa é um dos que a CMED publica para o
+               registro ANVISA deste produto, o cadastro se resolve sozinho. -->
+          @if (podeVerificarAnvisa()) {
+            <button
+              type="button"
+              (click)="verificarAnvisa()"
+              [disabled]="verificandoAnvisa()"
+              class="mt-3 w-full inline-flex items-center justify-center gap-2 text-base font-semibold text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 rounded-lg px-3 py-3 hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-50"
+            >
+              @if (verificandoAnvisa()) {
+                <svg class="animate-spin size-5" viewBox="0 0 24 24" fill="none">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+                </svg>
+                Consultando...
+              } @else {
+                <app-icon name="search" class="size-5" />
+                Verificar ANVISA
+              }
+            </button>
+          }
+          <p class="mt-2 text-sm font-normal text-red-700 dark:text-red-300">
+            Se o código está impresso na caixa, ele precisa ser cadastrado em
+            Produtos → código de barras logística.
+          </p>
+        }
+      </div>
+    }
+
+    <!-- BLOCO 1 — A CONTAGEM
+         Tudo que o operador toca a cada bipe fica junto e no topo: quanto já
+         entrou, o campo de leitura, o multiplicador e o registrar. O coletor
+         mede 320px de largura CSS (800×480 físicos ÷ dpr 1.5, em retrato), então
+         o código de barras ocupa a linha inteira e qtd + botão dividem a de baixo. -->
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3.5">
+      <div class="flex items-end justify-between gap-3 mb-1.5">
+        <label class="text-sm font-medium text-gray-700 dark:text-gray-200">Código de barras</label>
+        <p class="text-3xl font-bold tabular-nums leading-none" [class.text-emerald-600]="completo()" [class.text-gray-800]="!completo()" [class.dark:text-gray-100]="!completo()">
+          {{ it.quantidadeProcessada }}<span class="text-xl text-gray-400">/{{ it.quantidadePedida }}</span>
+        </p>
+      </div>
+      <input
+        #campoCodigo
+        type="text"
+        inputmode="numeric"
+        autocomplete="off"
+        [ngModel]="codigoBarras()"
+        (ngModelChange)="codigoBarras.set($event)"
+        (keyup.enter)="bipar()"
+        placeholder="Bipe ou digite"
+        class="py-3.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-lg font-mono focus:border-brand-500 focus:ring-brand-500"
+      />
+
+      <div class="flex items-end gap-2.5 mt-2.5">
+        <div class="w-20 shrink-0">
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1.5">Qtd</label>
+          <input
+            type="number"
+            min="1"
+            [ngModel]="multiplicador()"
+            (ngModelChange)="multiplicador.set($event || 1)"
+            class="py-3.5 px-3 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-lg text-center focus:border-brand-500 focus:ring-brand-500"
+          />
+        </div>
+        <button
+          type="button"
+          (click)="bipar()"
+          [disabled]="!codigoBarras().trim() || ocupado()"
+          class="flex-1 inline-flex items-center justify-center gap-2 text-base font-semibold border border-brand-600 text-brand-700 dark:text-brand-300 rounded-lg px-3 py-3.5 hover:bg-brand-50 dark:hover:bg-brand-900/30 disabled:opacity-40"
+        >
+          <app-icon name="barcode" class="size-5" />
+          Registrar
+        </button>
+      </div>
+    </div>
+
+    <!-- BLOCO 2 — O QUE É O ITEM
+         Consulta, não ação: o operador lê uma vez pra confirmar que pegou a
+         caixa certa. A descrição quebra em quantas linhas precisar — truncada
+         ela não serve pra conferir nada. -->
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3.5 mt-3">
+      <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 leading-snug">{{ it.produtoDescricao }}</p>
+      <div class="mt-1.5 text-sm font-mono text-gray-600 dark:text-gray-300 leading-relaxed">
+        <p>{{ it.produtoCodigo }}</p>
+        @if (it.produtoUnidade) { <p>Unidade {{ it.produtoUnidade }}</p> }
+        @if (it.enderecoProduto) { <p>Endereço {{ it.enderecoProduto }}</p> }
+        @if (it.lote) { <p>Lote {{ it.lote }}</p> }
+        @if (it.produtoMarcaNome) { <p>Marca {{ it.produtoMarcaNome }}</p> }
+        @if (it.produtoCodigoBarraNotas) { <p>Nota {{ it.produtoCodigoBarraNotas }}</p> }
+        @for (codigo of it.produtoCodigosBarrasLogistica; track codigo) { <p>Log {{ codigo }}</p> }
+        @if (it.produtoDun14) { <p>DUN {{ it.produtoDun14 }}</p> }
+      </div>
+    </div>
+
+    <div class="fixed inset-x-0 bottom-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 p-3">
+      <div class="max-w-[900px] mx-auto">
+        <button
+          type="button"
+          (click)="finalizar()"
+          [disabled]="ocupado()"
+          class="w-full inline-flex items-center justify-center gap-2 text-base font-semibold rounded-lg px-4 py-3.5 text-white disabled:opacity-40"
+          [class]="completo() ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'"
+        >
+          <app-icon [name]="completo() ? 'check' : 'lock'" class="size-5" />
+          <!-- O detalhe da falta e a exigência de senha já são o conteúdo do
+               diálogo seguinte; no botão eles só esticavam o rótulo. -->
+          {{ completo() ? 'Finalizar item' : 'Finalizar com falta' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- O resultado só aparece quando NÃO deu match: no match a leitura é
+         registrada na hora e o operador volta a contar, sem diálogo no caminho. -->
+    @if (resultadoAnvisa(); as resultado) {
+      @if (resultado.situacao !== 'vinculado') {
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div class="w-full max-w-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
+            <h2 class="font-semibold text-gray-800 dark:text-gray-100">Verificação ANVISA</h2>
+            <p class="text-sm text-gray-600 dark:text-gray-300 mt-2">{{ resultado.mensagem }}</p>
+
+            <!-- Conflito é o único caso em que existe algo a fazer depois, e
+                 exige saber QUAL produto está com o código. -->
+            @if (resultado.conflitos.length) {
+              <ul class="mt-3 space-y-2">
+                @for (conflito of resultado.conflitos; track conflito.codigo) {
+                  <li class="text-sm bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-900 rounded-lg p-2.5">
+                    <p class="font-mono text-gray-700 dark:text-gray-200">{{ conflito.codigo }}</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                      já é do produto {{ conflito.produtoCodigo }} — {{ conflito.produtoDescricao }}
+                    </p>
+                  </li>
+                }
+              </ul>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-3">
+                Nada foi alterado. Dois produtos com o mesmo código de barras é erro
+                de cadastro, e quem resolve isso é o setor de cadastro.
+              </p>
+            }
+
+            <button
+              type="button"
+              (click)="fecharResultadoAnvisa()"
+              class="mt-4 w-full text-sm font-semibold bg-brand-600 text-white rounded-lg px-3 py-3 hover:bg-brand-700"
+            >
+              Entendi
+            </button>
+          </div>
+        </div>
+      }
+    }
+
+    @if (pedindoSenha()) {
+      <app-senha-gerente
+        titulo="Finalizar com falta"
+        [descricao]="'Faltam ' + falta() + ' unidades deste item. Um gerente precisa autorizar o fechamento.'"
+        rotuloConfirmar="Autorizar"
+        [erro]="erroSenha()"
+        [ocupado]="ocupado()"
+        (confirmado)="confirmarComSenha($event)"
+        (cancelar)="pedindoSenha.set(false)"
+      />
+    }
+
+  } @else {
+    <div class="p-10 text-center text-red-600 text-sm">{{ erro() ?? 'Item não encontrado.' }}</div>
+  }
+</div>

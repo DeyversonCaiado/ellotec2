@@ -1,0 +1,165 @@
+<div class="p-4 sm:p-6 max-w-[900px] mx-auto">
+
+  <app-page-header [titulo]="modoEdicao() ? 'Editar cliente' : 'Novo cliente'" subtitulo="Dados cadastrais do cliente">
+    <a routerLink="/clientes" class="inline-flex items-center gap-2 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800">
+      Cancelar
+    </a>
+  </app-page-header>
+
+  <form [formGroup]="form" (ngSubmit)="salvar()" class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 sm:p-6 space-y-4">
+    <div class="grid sm:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Código</label>
+        <input type="text" formControlName="codigo" placeholder="Ex: CLI001" maxlength="10"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+      </div>
+
+      <div class="sm:col-span-2">
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Razão social</label>
+        <input type="text" formControlName="razaoSocial" placeholder="Ex: Distribuidora Saúde Total Ltda"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+        @if (form.controls.razaoSocial.invalid && form.controls.razaoSocial.touched) {
+          <p class="text-xs text-red-600 mt-1">Informe a razão social.</p>
+        }
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Nome fantasia</label>
+        <input type="text" formControlName="nomeFantasia" placeholder="Ex: Saúde Total"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">CPF/CNPJ</label>
+        <input type="text" formControlName="cpfCnpj" placeholder="000.000.000-00 ou 00.000.000/0000-00"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+        @if (form.controls.cpfCnpj.invalid && form.controls.cpfCnpj.touched) {
+          <p class="text-xs text-red-600 mt-1">Informe um CPF (000.000.000-00) ou CNPJ (00.000.000/0000-00) válido.</p>
+        }
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">E-mail</label>
+        <input type="email" formControlName="email" placeholder="contato@empresa.com.br"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Telefone</label>
+        <input type="text" formControlName="telefone" placeholder="(62) 3201-4455"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Celular</label>
+        <input type="text" formControlName="celular" placeholder="(62) 99201-4455"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+      </div>
+
+      <div class="sm:col-span-2">
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Logradouro</label>
+        <input type="text" formControlName="logradouro" placeholder="Ex: Av. T-4"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Número</label>
+        <input type="text" formControlName="numero" placeholder="Ex: 1234"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Complemento</label>
+        <input type="text" formControlName="complemento" placeholder="Ex: Sala 202"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Bairro</label>
+        <input type="text" formControlName="bairro" placeholder="Ex: Setor Bueno"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">CEP</label>
+        <input type="text" formControlName="cep" placeholder="74000-000"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+      </div>
+
+      <div class="sm:col-span-2">
+        <label class="block text-sm font-medium text-gray-700 mb-1.5">Cidade</label>
+
+        @if (cidadeSelecionada()) {
+          <div class="flex items-center justify-between border border-gray-300 dark:border-gray-700 dark:bg-gray-800 rounded-lg px-3.5 py-2.5">
+            <p class="text-sm text-gray-800 dark:text-gray-100">{{ cidadeSelecionada()!.nome }} / {{ cidadeSelecionada()!.uf }}</p>
+            <button type="button" (click)="removerCidade()" class="p-1 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50" title="Trocar cidade">
+              <app-icon name="x" class="size-4" />
+            </button>
+          </div>
+        } @else {
+          <div class="relative">
+            <div class="relative">
+              <div class="absolute inset-y-0 start-0 flex items-center pointer-events-none ps-3.5">
+                <app-icon name="search" class="size-4 text-gray-400" />
+              </div>
+              <input
+                type="text"
+                [ngModel]="buscaCidadeTermo()"
+                [ngModelOptions]="{ standalone: true }"
+                (ngModelChange)="digitarBuscaCidade($event)"
+                placeholder="Buscar cidade por nome ou UF..."
+                class="py-2.5 ps-10 pe-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500"
+              />
+            </div>
+
+            @if (buscaCidadeAberta()) {
+              <div class="absolute z-10 mt-1.5 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                @if (buscaCidadeResultados().length === 0) {
+                  <p class="text-sm text-gray-400 p-3.5">Nenhuma cidade encontrada.</p>
+                } @else {
+                  @for (cidade of buscaCidadeResultados(); track cidade.id) {
+                    <button
+                      type="button"
+                      (click)="selecionarCidade(cidade)"
+                      class="w-full text-start px-3.5 py-2.5 hover:bg-gray-50 flex items-center justify-between"
+                    >
+                      <p class="text-sm text-gray-800">{{ cidade.nome }} / {{ cidade.uf }}</p>
+                      <app-icon name="chevron-right" class="size-4 text-gray-300" />
+                    </button>
+                  }
+                }
+              </div>
+            }
+          </div>
+        }
+
+        @if (form.controls.cidadeId.invalid && form.controls.cidadeId.touched) {
+          <p class="text-xs text-red-600 mt-1">Selecione a cidade do cliente.</p>
+        }
+      </div>
+
+      <div class="flex items-end">
+        <label class="flex items-center gap-x-2.5 text-sm text-gray-700 select-none pb-2.5">
+          <input type="checkbox" formControlName="ativo" class="shrink-0 rounded border-gray-300 dark:border-gray-600 dark:bg-gray-800 text-brand-600 focus:ring-brand-500" />
+          Cliente ativo
+        </label>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-end gap-3 pt-2">
+      <a routerLink="/clientes" class="text-sm font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-4 py-2.5">Cancelar</a>
+      <button type="submit" [disabled]="carregando()"
+        class="inline-flex items-center gap-2 text-sm font-semibold bg-brand-600 text-white rounded-lg px-5 py-2.5 hover:bg-brand-700 disabled:opacity-60">
+        @if (carregando()) {
+          <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+          </svg>
+        } @else {
+          <app-icon name="check" class="size-4" />
+        }
+        Salvar cliente
+      </button>
+    </div>
+  </form>
+</div>

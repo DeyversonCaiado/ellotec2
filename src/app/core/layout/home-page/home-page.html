@@ -1,0 +1,116 @@
+<div class="p-4 sm:p-6 max-w-[1400px] mx-auto space-y-6">
+
+  <!-- Breadcrumb -->
+  <nav class="text-sm text-gray-400 dark:text-gray-500 flex items-center gap-1.5">
+    <span>Início</span>
+    <app-icon name="chevron-right" class="size-3" />
+    <span>Dashboards</span>
+    <app-icon name="chevron-right" class="size-3" />
+    <span class="text-gray-600 dark:text-gray-300 font-medium">Projeto</span>
+  </nav>
+
+  <!-- Boas-vindas -->
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <div class="size-12 rounded-full bg-brand-600 text-white flex items-center justify-center font-semibold">
+        {{ (usuario()?.nome ?? '?').charAt(0) }}
+      </div>
+      <div>
+        <h1 class="text-lg font-bold text-gray-900 dark:text-gray-50">Bem-vindo de volta, {{ usuario()?.nome }}!</h1>
+        <p class="text-sm text-gray-400 dark:text-gray-500 flex items-center gap-1.5">
+          <app-icon name="bell" class="size-3.5" />
+          Você tem 2 novas mensagens e 15 novas tarefas
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabs fictícias -->
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div class="inline-flex items-center bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-1">
+      <button class="text-sm font-medium px-3.5 py-1.5 rounded-md bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900">Início</button>
+      <button class="text-sm font-medium px-3.5 py-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">Pedido</button>
+      <button class="text-sm font-medium px-3.5 py-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">Equipe</button>
+    </div>
+    <button class="inline-flex items-center gap-2 text-sm font-medium border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 rounded-lg px-3.5 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
+      ACME Corp. Backend App
+      <app-icon name="chevron-down" class="size-3.5" />
+    </button>
+  </div>
+
+  <!-- Cards de stats -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-sm font-medium text-gray-500 dark:text-gray-400">Hoje</span>
+        <app-icon name="grip" class="size-4 text-gray-300 dark:text-gray-700" />
+      </div>
+      <p class="text-3xl font-extrabold text-gray-900 dark:text-gray-50">25</p>
+      <p class="text-sm text-gray-400 dark:text-gray-500 mt-1">Tarefas pendentes</p>
+      <p class="text-xs text-gray-400 dark:text-gray-500 mt-3">Concluídas: <span class="font-semibold text-gray-600 dark:text-gray-300">7</span></p>
+    </div>
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-sm font-medium text-gray-500 dark:text-gray-400">Atrasadas</span>
+        <app-icon name="grip" class="size-4 text-gray-300 dark:text-gray-700" />
+      </div>
+      <p class="text-3xl font-extrabold text-gray-900 dark:text-gray-50">4</p>
+      <p class="text-sm text-gray-400 dark:text-gray-500 mt-1">Tarefas</p>
+      <p class="text-xs text-gray-400 dark:text-gray-500 mt-3">Atrasadas ontem: <span class="font-semibold text-gray-600 dark:text-gray-300">2</span></p>
+    </div>
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-sm font-medium text-gray-500 dark:text-gray-400">Pendências</span>
+        <app-icon name="grip" class="size-4 text-gray-300 dark:text-gray-700" />
+      </div>
+      <p class="text-3xl font-extrabold text-gray-900 dark:text-gray-50">32</p>
+      <p class="text-sm text-gray-400 dark:text-gray-500 mt-1">Em aberto</p>
+      <p class="text-xs text-gray-400 dark:text-gray-500 mt-3">Resolvidas hoje: <span class="font-semibold text-gray-600 dark:text-gray-300">0</span></p>
+    </div>
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-sm font-medium text-gray-500 dark:text-gray-400">Recursos</span>
+        <app-icon name="grip" class="size-4 text-gray-300 dark:text-gray-700" />
+      </div>
+      <p class="text-3xl font-extrabold text-gray-900 dark:text-gray-50">42</p>
+      <p class="text-sm text-gray-400 dark:text-gray-500 mt-1">Propostas</p>
+      <p class="text-xs text-gray-400 dark:text-gray-500 mt-3">Implementadas: <span class="font-semibold text-gray-600 dark:text-gray-300">8</span></p>
+    </div>
+  </div>
+
+  <!-- Gráfico + acesso aos domínios -->
+  <div class="grid lg:grid-cols-3 gap-4">
+    <div class="lg:col-span-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="font-semibold text-gray-800 dark:text-gray-100">Atividade da semana</h2>
+        <div class="inline-flex items-center bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-1">
+          <button class="text-xs font-semibold px-3 py-1 rounded-md bg-white dark:bg-gray-700 shadow-sm text-gray-700 dark:text-gray-100">Esta semana</button>
+          <button class="text-xs font-semibold px-3 py-1 rounded-md text-gray-400 dark:text-gray-500">Semana passada</button>
+        </div>
+      </div>
+      <div class="flex items-end gap-3 h-40">
+        @for (ponto of graficoSemana; track ponto.dia) {
+          <div class="flex-1 flex flex-col items-center gap-2">
+            <div class="w-full bg-brand-500/80 rounded-t-md hover:bg-brand-600 transition" [style.height.%]="(ponto.valor / 34) * 100"></div>
+            <span class="text-xs text-gray-400 dark:text-gray-500">{{ ponto.dia }}</span>
+          </div>
+        }
+      </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
+      <h2 class="font-semibold text-gray-800 dark:text-gray-100 mb-1">Visão geral</h2>
+      <p class="text-xs text-gray-400 dark:text-gray-500 mb-4">Resumo rápido dos módulos</p>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
+          <p class="text-xl font-bold text-brand-700 dark:text-brand-400">214</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">Novos itens</p>
+        </div>
+        <div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
+          <p class="text-xl font-bold text-brand-700 dark:text-brand-400">75</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">Concluídos</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

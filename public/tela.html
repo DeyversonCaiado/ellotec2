@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Diagnóstico de tela</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 12px; background: #0f172a; color: #e2e8f0; }
+    h1 { font-size: 15px; margin: 0 0 10px; color: #94a3b8; font-weight: 600; }
+    .destaque { font-size: 34px; font-weight: 800; line-height: 1.1; margin: 0 0 2px; }
+    .destaque small { font-size: 14px; font-weight: 500; color: #94a3b8; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px; }
+    td { padding: 6px 0; border-bottom: 1px solid #1e293b; vertical-align: top; }
+    td:first-child { color: #94a3b8; width: 45%; }
+    td:last-child { font-weight: 700; font-family: ui-monospace, monospace; }
+    .aviso { margin-top: 12px; padding: 10px; border-radius: 8px; font-size: 14px; font-weight: 600; }
+    .ok { background: #064e3b; color: #a7f3d0; }
+    .alerta { background: #78350f; color: #fde68a; }
+    .ua { margin-top: 12px; font-size: 11px; color: #64748b; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>Diagnóstico de tela — ELLOTEC</h1>
+
+  <p class="destaque" id="viewport"></p>
+  <p><small id="legenda"></small></p>
+
+  <table>
+    <tr><td>Viewport CSS (é o que o layout enxerga)</td><td id="css"></td></tr>
+    <tr><td>Tela do aparelho (CSS px)</td><td id="screen"></td></tr>
+    <tr><td>Densidade (devicePixelRatio)</td><td id="dpr"></td></tr>
+    <tr><td>Pixels físicos estimados</td><td id="fisico"></td></tr>
+    <tr><td>Orientação</td><td id="orientacao"></td></tr>
+  </table>
+
+  <div class="aviso" id="aviso"></div>
+
+  <p class="ua" id="ua"></p>
+
+  <script>
+    function atualizar() {
+      // innerWidth/innerHeight são pixels CSS: é a unidade que o Tailwind usa
+      // nos breakpoints. A resolução "800x480" de catálogo do coletor é física —
+      // com devicePixelRatio > 1 o layout enxerga menos que isso.
+      var lc = window.innerWidth, la = window.innerHeight;
+      var dpr = window.devicePixelRatio || 1;
+
+      document.getElementById('viewport').textContent = lc + ' × ' + la;
+      document.getElementById('legenda').textContent = 'largura × altura em pixels CSS';
+      document.getElementById('css').textContent = lc + ' × ' + la;
+      document.getElementById('screen').textContent = screen.width + ' × ' + screen.height;
+      document.getElementById('dpr').textContent = dpr;
+      document.getElementById('fisico').textContent =
+        Math.round(screen.width * dpr) + ' × ' + Math.round(screen.height * dpr);
+      document.getElementById('orientacao').textContent = lc >= la ? 'paisagem' : 'retrato';
+
+      var aviso = document.getElementById('aviso');
+      if (lc < 800) {
+        aviso.className = 'aviso ok';
+        aviso.textContent = 'Abaixo de 800px: as telas de expedição usam o layout empilhado (campo abaixo de campo).';
+      } else {
+        aviso.className = 'aviso alerta';
+        aviso.textContent = 'De 800px pra cima: as telas de expedição usam o layout de tabela.';
+      }
+
+      document.getElementById('ua').textContent = navigator.userAgent;
+    }
+
+    atualizar();
+    window.addEventListener('resize', atualizar);
+    window.addEventListener('orientationchange', function () { setTimeout(atualizar, 200); });
+  </script>
+</body>
+</html>

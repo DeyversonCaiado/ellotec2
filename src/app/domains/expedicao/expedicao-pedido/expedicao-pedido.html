@@ -1,0 +1,260 @@
+<div class="p-4 sm:p-6 max-w-[1100px] mx-auto pb-28">
+
+  @if (carregando()) {
+    <div class="p-12 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm gap-2">
+      <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+      </svg>
+      Carregando pedido...
+    </div>
+  } @else if (pedido(); as p) {
+
+    <div class="flex items-center gap-3 mb-5">
+      <a routerLink="/expedicao" class="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800" title="Voltar">
+        <app-icon name="arrow-left" class="size-5" />
+      </a>
+      <div>
+        <h1 class="text-xl font-bold text-gray-900 dark:text-gray-50 font-mono">Pedido {{ numeroExibicao(p) }}</h1>
+        <p class="text-sm text-gray-400 dark:text-gray-500">Lista de separação · {{ p.dataPedido | date:'dd/MM/yyyy' }}</p>
+      </div>
+    </div>
+
+    @if (erro()) {
+      <div class="mb-4 flex items-start gap-2 text-sm text-red-700 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900 rounded-lg p-3">
+        <app-icon name="alert" class="size-4 mt-0.5 shrink-0" />
+        <span>{{ erro() }}</span>
+      </div>
+    }
+
+    <!-- Cabeçalho: cliente, vendedor, observação -->
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 mb-5">
+      <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+        <div class="sm:col-span-2">
+          <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Cliente</dt>
+          <dd class="font-semibold text-gray-800 dark:text-gray-100">
+            @if (p.clienteCodigo) { <span class="font-mono text-gray-400">{{ p.clienteCodigo }}</span> }
+            {{ p.clienteRazaoSocial }}
+          </dd>
+          <dd class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ p.clienteCnpj }}</dd>
+        </div>
+        <div class="sm:col-span-2">
+          <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Endereço</dt>
+          <dd class="text-gray-700 dark:text-gray-200">
+            {{ p.clienteEndereco }}
+            @if (p.clienteBairro) { · {{ p.clienteBairro }} }
+            @if (p.clienteCep) { · {{ p.clienteCep }} }
+            · {{ p.clienteCidadeNome }}/{{ p.clienteCidadeUf }}
+          </dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Vendedor</dt>
+          <dd class="text-gray-700 dark:text-gray-200">{{ p.vendedorNome ?? '—' }}</dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Volume</dt>
+          <dd class="text-gray-700 dark:text-gray-200">
+            {{ p.quantidadeItens }} {{ p.quantidadeItens === 1 ? 'item' : 'itens' }} · {{ p.quantidadeTotal }} un
+          </dd>
+        </div>
+        @if (p.observacoes) {
+          <div class="sm:col-span-2">
+            <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Observação</dt>
+            <dd class="text-gray-700 dark:text-gray-200">{{ p.observacoes }}</dd>
+          </div>
+        }
+      </dl>
+    </div>
+
+    <!-- Situação das duas etapas -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+      @for (etapa of [{ tipo: 'separacao', situacao: p.separacao }, { tipo: 'conferencia', situacao: p.conferencia }]; track etapa.tipo) {
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">{{ rotuloTipo($any(etapa.tipo)) }}</p>
+              <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 mt-0.5">{{ rotuloSituacao(etapa.situacao) }}</p>
+              @if (etapa.situacao.usuarioNome) {
+                <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Operador: {{ etapa.situacao.usuarioNome }}</p>
+              }
+            </div>
+            @if (etapa.situacao.id) {
+              <ng-container *appPermissao="'expedicao.resetar'">
+                <button
+                  type="button"
+                  (click)="pedirSenhaParaResetar($any(etapa.tipo))"
+                  class="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700 rounded-lg px-2.5 py-1.5 hover:text-red-600 hover:border-red-200"
+                  [title]="'Resetar ' + rotuloTipo($any(etapa.tipo)).toLowerCase()"
+                >
+                  <app-icon name="rotate" class="size-3.5" />
+                  Resetar
+                </button>
+              </ng-container>
+            }
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- Itens -->
+    <!-- O card é a tabela no desktop; abaixo de 800px quem vira card é cada
+         item, então o container perde a moldura pra não aninhar duas. -->
+    <div class="min-[800px]:bg-white min-[800px]:dark:bg-gray-900 min-[800px]:border min-[800px]:border-gray-200 min-[800px]:dark:border-gray-800 min-[800px]:rounded-xl min-[800px]:overflow-hidden">
+      <!-- Mesma regra da listagem: abaixo de 800px cada item vira rótulo + valor
+           empilhados, em vez de uma tabela que só cabe rolando pro lado. -->
+      <div class="space-y-3 min-[800px]:hidden">
+        @for (item of p.itens; track item.pedidoItemId) {
+          <dl class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 space-y-2 text-sm">
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Endereço</dt>
+              <dd class="font-mono text-gray-600 dark:text-gray-300">{{ item.enderecoProduto ?? '—' }}</dd>
+            </div>
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Qtd</dt>
+              <dd class="font-semibold text-gray-800 dark:text-gray-100">{{ item.quantidade }}</dd>
+            </div>
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Descrição</dt>
+              <dd class="min-w-0">
+                <p class="text-gray-700 dark:text-gray-200">{{ item.produtoDescricao }}</p>
+                <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ item.produtoCodigo }}</p>
+                <!-- Mesmo tamanho do código de propósito: marca e códigos de
+                     barra são identificação do produto, não destaque. -->
+                @if (item.produtoMarcaNome) {
+                  <p class="text-xs text-gray-400 dark:text-gray-500">{{ item.produtoMarcaNome }}</p>
+                }
+                @if (item.produtoCodigoBarraNotas) {
+                  <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">Nota {{ item.produtoCodigoBarraNotas }}</p>
+                }
+                @for (codigo of item.produtoCodigosBarrasLogistica; track codigo) {
+                  <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">Log {{ codigo }}</p>
+                }
+                @if (item.produtoDun14) {
+                  <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">DUN {{ item.produtoDun14 }}</p>
+                }
+              </dd>
+            </div>
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Lote</dt>
+              <dd class="font-mono text-gray-500 dark:text-gray-400">{{ item.lote ?? '—' }}</dd>
+            </div>
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Separação</dt>
+              <dd>
+                <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corItem(item.separacaoSituacao)">
+                  {{ rotuloItem(item.separacaoSituacao) }} · {{ item.separacaoQuantidade }}/{{ item.quantidade }}
+                </span>
+              </dd>
+            </div>
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Conferência</dt>
+              <dd>
+                <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corItem(item.conferenciaSituacao)">
+                  {{ rotuloItem(item.conferenciaSituacao) }} · {{ item.conferenciaQuantidade }}/{{ item.quantidade }}
+                </span>
+              </dd>
+            </div>
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Múltiplo de venda</dt>
+              <dd class="text-gray-600 dark:text-gray-300">{{ item.quantidadeMultiplaVenda }} un</dd>
+            </div>
+          </dl>
+        }
+      </div>
+
+      <div class="hidden min-[800px]:block overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-100 dark:divide-gray-800">
+          <thead class="bg-gray-50 dark:bg-gray-800/60">
+            <tr>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Endereço</th>
+              <th class="px-4 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Qtd</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Descrição</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Lote</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Separação</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Conferência</th>
+              <th class="px-4 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Múlt. venda</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+            @for (item of p.itens; track item.pedidoItemId) {
+              <tr>
+                <td class="px-4 py-3 text-sm font-mono text-gray-600 dark:text-gray-300">{{ item.enderecoProduto ?? '—' }}</td>
+                <td class="px-4 py-3 text-sm text-end font-semibold text-gray-800 dark:text-gray-100">{{ item.quantidade }}</td>
+                <td class="px-4 py-3">
+                  <p class="text-sm text-gray-700 dark:text-gray-200">{{ item.produtoDescricao }}</p>
+                  <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ item.produtoCodigo }}</p>
+                  @if (item.produtoMarcaNome) {
+                    <p class="text-xs text-gray-400 dark:text-gray-500">{{ item.produtoMarcaNome }}</p>
+                  }
+                  @if (item.produtoCodigoBarraNotas) {
+                    <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">Nota {{ item.produtoCodigoBarraNotas }}</p>
+                  }
+                  @for (codigo of item.produtoCodigosBarrasLogistica; track codigo) {
+                    <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">Log {{ codigo }}</p>
+                  }
+                  @if (item.produtoDun14) {
+                    <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">DUN {{ item.produtoDun14 }}</p>
+                  }
+                </td>
+                <td class="px-4 py-3 text-sm font-mono text-gray-500 dark:text-gray-400">{{ item.lote ?? '—' }}</td>
+                <td class="px-4 py-3">
+                  <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corItem(item.separacaoSituacao)">
+                    {{ rotuloItem(item.separacaoSituacao) }} · {{ item.separacaoQuantidade }}/{{ item.quantidade }}
+                  </span>
+                </td>
+                <td class="px-4 py-3">
+                  <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corItem(item.conferenciaSituacao)">
+                    {{ rotuloItem(item.conferenciaSituacao) }} · {{ item.conferenciaQuantidade }}/{{ item.quantidade }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-end text-gray-600 dark:text-gray-300 tabular-nums">{{ item.quantidadeMultiplaVenda }} un</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Barra de ação fixa no rodapé -->
+    <div class="fixed inset-x-0 bottom-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 p-3 sm:p-4">
+      <div class="max-w-[1100px] mx-auto">
+        @if (p.proximaEtapa && !p.podeIniciar) {
+          <!-- A trava real é do backend (409 em iniciar_processo); aqui a tela
+               só evita o clique que já nasceria recusado, e diz o porquê. -->
+          <p class="text-center text-sm text-gray-500 dark:text-gray-400">
+            Pedido no status <span class="font-mono font-semibold">{{ p.statusPedido }}</span> — só pedido liberado pelo ERP (PED) pode ser separado ou conferido.
+          </p>
+        } @else if (p.proximaEtapa) {
+          <button
+            type="button"
+            (click)="abrirProcesso()"
+            [disabled]="abrindo()"
+            class="w-full inline-flex items-center justify-center gap-2 text-base font-semibold bg-brand-600 text-white rounded-lg px-4 py-3.5 hover:bg-brand-700 disabled:opacity-40"
+          >
+            <app-icon name="barcode" class="size-5" />
+            {{ rotuloAcao() }}
+          </button>
+        } @else {
+          <p class="text-center text-sm font-semibold text-emerald-700">
+            Separação e conferência concluídas.
+          </p>
+        }
+      </div>
+    </div>
+
+    @if (resetando(); as tipo) {
+      <app-senha-gerente
+        [titulo]="'Resetar ' + rotuloTipo(tipo).toLowerCase()"
+        descricao="O processo será descartado e poderá ser refeito do zero. Exige senha de um gerente."
+        rotuloConfirmar="Resetar"
+        [erro]="erroReset()"
+        [ocupado]="resetOcupado()"
+        (confirmado)="confirmarReset($event)"
+        (cancelar)="resetando.set(null)"
+      />
+    }
+
+  } @else {
+    <div class="p-12 text-center text-red-600 text-sm">{{ erro() ?? 'Pedido não encontrado.' }}</div>
+  }
+</div>

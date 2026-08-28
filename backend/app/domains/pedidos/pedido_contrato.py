@@ -15,15 +15,26 @@ class ItemPedidoEntradaSchema(ContratoBase):
 
     produto_id: str | None = None
     # Se informado, o item é resolvido por esse campo em vez de produto_id —
-    # mesmo padrão de marca_sistema_origem_id em produtos.
-    produto_sistema_origem_id: str | None = None
+    # mesmo padrão de marca_sistema_origem_id em produtos. Além de resolver a
+    # FK, agora ele fica GRAVADO: é uma das três pernas da chave natural do
+    # item no ERP (ver pedido_model.py).
+    produto_sistema_origem_id: str | None = Field(default=None, max_length=100)
     produto_codigo: str = Field(default="", max_length=40)
     produto_descricao: str = Field(default="", max_length=255)
     preco_unitario: Decimal = Field(default=Decimal(0), ge=0)
     quantidade: int = Field(gt=0)
-    # Disponíveis apenas via API — não exibidos nem editáveis no front hoje.
-    endereco_produto: str | None = Field(default=None, max_length=100)
+    # Disponível apenas via API — não exibido nem editável no front hoje.
+    # O endereço NÃO entra aqui: ele é do estoque, não do pedido (ver
+    # pedido_model.py e o domínio `enderecamento`).
     lote: str | None = Field(default=None, max_length=100)
+
+    # As outras duas pernas da chave natural. Ambas opcionais no item: os itens
+    # de um pedido são todos da mesma empresa e do mesmo pedido, então a capa
+    # serve de padrão e a integração não precisa repetir os dois textos em cada
+    # linha (ver `_montar_itens` em pedido_service.py). Item que informar o
+    # próprio valor manda nele.
+    empresa_sistema_origem_id: str | None = Field(default=None, max_length=100)
+    pedido_sistema_origem_id: str | None = Field(default=None, max_length=100)
 
     @model_validator(mode="after")
     def validar_referencia_de_produto(self) -> "ItemPedidoEntradaSchema":
@@ -39,9 +50,14 @@ class ItemPedidoRespostaSchema(ContratoBase):
     produto_descricao: str
     quantidade: int
     preco_unitario: float  # serializado como number no JSON (front usa para calcular total)
-    # Disponíveis apenas via API — não exibidos nem editáveis no front hoje.
-    endereco_produto: str | None
+    # Disponível apenas via API — não exibido nem editável no front hoje.
     lote: str | None
+    # O trio que identifica a linha no ERP — devolvido para a integração casar
+    # o item que ela mandou com a linha que nasceu aqui, sem ter que confiar na
+    # ordem do array.
+    empresa_sistema_origem_id: str | None
+    pedido_sistema_origem_id: str | None
+    produto_sistema_origem_id: str | None
 
 class PedidoListaPaginadaSchema(ContratoBase):
     """Mesmo formato de página dos outros domínios (ver ProdutoListaPaginadaSchema)
@@ -103,29 +119,31 @@ class PedidoBaseSchema(ContratoBase):
     def itens_sem_linha_duplicada(
         cls, itens: list[ItemPedidoEntradaSchema]
     ) -> list[ItemPedidoEntradaSchema]:
-        """O mesmo produto PODE repetir, desde que em lote ou endereço diferente.
+        """Uma linha por `(produto, lote)`. O mesmo produto só repete em lote
+        diferente.
 
-        A regra antiga olhava só o produto, e recusava o caso normal do galpão:
-        o mesmo item, do mesmo lote, guardado em dois endereços — cada linha
-        diz onde buscar qual quantidade. Somar as duas numa linha só apagaria
-        justamente a informação que a separação precisa.
+        O endereço NÃO entra na chave, e essa é a parte que engana. Ele é onde a
+        mercadoria está guardada no nosso galpão — informação nossa, não do que
+        o cliente comprou. Um lote realmente se espalha por vários endereços,
+        mas isso é assunto da separação (`expedicao_separacao_itens`), não da
+        linha do pedido; é assim que os ERPs grandes modelam, e a linha de
+        pedido deles nem tem endereço.
 
-        O que continua proibido é a linha idêntica nos três campos: aí não há
-        o que distinguir, e são duas linhas para a mesma coisa.
+        A regra anterior incluía o endereço e deixava passar exatamente o defeito
+        que motivou esta: a consulta da integração cruzava a linha do pedido com
+        o estoque por endereço e devolvia uma linha por endereço, cada uma com a
+        quantidade INTEIRA. Um pedido de 14.000 un entrava com 42.000, e a
+        validação aprovava.
         """
         chaves_vistas = {
-            (
-                item.produto_id or item.produto_sistema_origem_id,
-                item.lote,
-                item.endereco_produto,
-            )
+            (item.produto_id or item.produto_sistema_origem_id, item.lote)
             for item in itens
         }
         if len(chaves_vistas) != len(itens):
             raise ValueError(
-                "Duas linhas com o mesmo produto, lote e endereço — some a quantidade "
-                "na mesma linha. O mesmo produto pode repetir se o lote ou o endereço "
-                "for diferente."
+                "Duas linhas com o mesmo produto e lote — some a quantidade na mesma "
+                "linha. O endereço não separa uma linha da outra: ele diz onde a "
+                "mercadoria está, não o que foi pedido."
             )
         return itens
 
@@ -152,7 +170,8 @@ class PedidoAtualizarSchema(PedidoBaseSchema):
 
 class PedidoRespostaSchema(ContratoBase):
     id: str
-    numero: str
+    # Nulo enquanto a origem externa não tiver dado um número ao pedido.
+    numero: str | None
     data_pedido: date
     cliente_id: str
     cliente: ClientePedidoSchema

@@ -57,7 +57,9 @@ app/
 │   ├── usuarios/                      # CRUD de usuários + matriz de permissões
 │   ├── clientes/                      # CRUD de clientes
 │   ├── produtos/                      # CRUD de produtos
-│   └── pedidos/                       # CRUD de pedidos
+│   ├── pedidos/                       # CRUD de pedidos
+│   ├── estoque/                       # saldo por produto e por lote
+│   └── enderecamento/                 # endereços do galpão e o lote em cada um
 ├── shared/
 │   ├── sync_mixin.py                  # SyncMixin (5 campos sync_*) + IdMixin (UUID)
 │   ├── sync_helpers.py                # marcar_apagado(), incrementar_versao()
@@ -208,12 +210,62 @@ Todas as tabelas de negócio têm 5 campos obrigatórios:
 
 **Regras inegociáveis:**
 
+- **Nenhum campo `sync_*` participa de regra de negócio.** Ver a seção logo
+  abaixo — esta é a regra mais fácil de violar sem perceber.
 - Nenhum service de domínio chama `sessao.delete(registro)` em model com
   `SyncMixin`. Sempre `marcar_apagado(registro)` de `shared/sync_helpers.py`.
 - `sync_synced_at` é gerenciado por processo de sincronização futuro — nenhum
   service de domínio escreve nesse campo.
 - PKs são UUID (não auto-increment) — sistema distribuído não pode usar
   auto-increment porque duas réplicas offline colidiriam IDs na sincronização.
+
+### Os campos `sync_*` nunca entram na regra de negócio
+
+Eles descrevem **a linha**, não o **fato** que a linha representa. É proibido
+usá-los como dado de negócio, em qualquer domínio:
+
+| Uso | Permitido? |
+|---|---|
+| Ordenar eventos (linha do tempo, histórico, ocorrências) por `sync_created_at` | **Não** |
+| Devolver `sync_created_at`/`sync_updated_at` como um fato ("registrado em", "entregue em") | **Não** |
+| Filtrar período por `sync_updated_at` | **Não** — o período é sempre a data de negócio |
+| Calcular prazo, SLA ou idade do documento a partir deles | **Não** |
+| Decidir qual registro é "o mais recente" numa regra | **Não** |
+| Diagnosticar quando a linha foi tocada pela integração | Sim — é para isso que existem |
+| Alimentar o futuro worker de replicação (`sync_synced_at`) | Sim |
+
+**O motivo é concreto, não estético.** Um reprocessamento da integração, uma
+correção de texto ou a futura rotina de replicação tocam a linha e mexem em
+`sync_updated_at` sem que nada tenha acontecido no negócio. Quem ordenou por
+`sync_created_at` vê a ordem mudar sozinha; quem filtrou por `sync_updated_at`
+vê o documento entrar e sair do período; quem calculou prazo a partir deles
+passa a medir o tempo desde o último reprocessamento.
+
+Há ainda um motivo técnico que pega mesmo quem "só queria ordenar":
+`sync_created_at` é `DATETIME` sem precisão fracionária, ou seja, resolução de
+**segundo**. Dois registros criados no mesmo segundo empatam, e o desempate cai
+no `id` — que é UUID, aleatório e não cronológico. O "mais recente" vira
+sorteio. Foi exatamente isso que aconteceu na linha do tempo da gestão de
+entregas antes da correção.
+
+**Quando o negócio precisa de um instante, crie uma coluna própria** e
+preencha-a explicitamente no service:
+
+```python
+# FRAGMENTO ILUSTRATIVO — app/domains/entregas/entrega_model.py
+
+class EntregaNotaInteracao(Base, IdMixin, SyncMixin):
+    # O instante do EVENTO — é dele que a timeline ordena e é ele que a tela
+    # exibe. Nasce igual à data de inclusão, mas é campo de negócio: se um dia
+    # a interação puder ser lançada com data retroativa, é aqui que a data vai.
+    data_interacao: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+    # A ordem dentro da nota, imune a empate de segundo no relógio.
+    sequencia: Mapped[int] = mapped_column(Integer, nullable=False)
+```
+
+O mesmo raciocínio vale para soft delete: `sync_deleted_at` diz que a linha foi
+removida, e não *por que* nem *quando o negócio cancelou algo* — se essa
+informação importa, ela tem coluna própria.
 
 ## Regras de import entre domínios
 
@@ -243,11 +295,17 @@ A pergunta certa não é *"esses dois domínios podem se conhecer?"*. É
 | O que atravessa | Permitido? |
 |---|---|
 | **Leitura** — perguntar um dado ou um cálculo | Sim, por um canal declarado |
-| **Escrita** — gravar/alterar/apagar no outro domínio | Não. Nunca. |
+| **Escrita** — pedir ao dono que altere o estado dele | Sim, pelo mesmo canal, e **sem `commit()`** |
+| **Escrita direta** — dar `sessao_db.add`/`delete`/`commit` na tabela do outro | Não. Nunca. |
 | **Regra reimplementada** — recalcular por conta própria o que é regra do outro | Não. Nunca. |
 
 Um domínio é **dono** dos seus dados e das suas regras. Os outros podem
-*perguntar*, nunca *mexer*, e nunca *adivinhar*.
+*perguntar* e *pedir*, nunca *mexer por conta própria*, e nunca *adivinhar*.
+
+A diferença entre as duas linhas de escrita é quem executa a mudança. `pedir`
+é chamar uma função que o dono escreveu, que valida as regras dele e falha se
+elas não fecharem. `mexer` é o chamador manipular a tabela alheia direto — aí
+a regra do dono deixa de existir, porque ninguém a executou.
 
 ### O que PODE (com exemplos concretos)
 
@@ -256,6 +314,7 @@ Um domínio é **dono** dos seus dados e das suas regras. Os outros podem
 | FK para uma tabela de cadastro | `clientes.cidade_id` → `cidades.id` | `cliente_model.py` importa **apenas o model** `Cidade` |
 | Exibir dado vivo do cadastro referenciado | listagem de clientes mostrando o nome da cidade | `relationship()` no model, ou `cidade_publico.py` |
 | Pedir um cálculo ao dono da regra | `pedidos` perguntando o preço atual a `produtos` | `produto_publico.obter_preco(sessao_db, produto_id)` |
+| **Pedir ao dono que altere o estado dele** | a expedição baixando o saldo do endereço ao finalizar a separação | `enderecamento_publico.baixar_lote(sessao_db, lote_id, qtd)` — **sem `commit()`** |
 | Validar que um id existe | criar pedido com `cliente_id` | **não importa nada** — a FK do banco recusa |
 
 ### O que NÃO PODE (com exemplos concretos)
@@ -265,23 +324,31 @@ Um domínio é **dono** dos seus dados e das suas regras. Os outros podem
 | Query na tabela de outro domínio | `sessao_db.query(Cidade)` dentro de `cliente_service.py` | Se a tabela mudar, quebra em N domínios de uma vez. É a duplicação que a regra existe para impedir |
 | Importar o `_service` de outro domínio | `from app.domains.produtos import produto_service` em `pedido_service.py` | Traz junto toda a regra de negócio do outro, sem contrato nenhum. A dependência vira invisível |
 | Importar `_router` ou `_contrato` de outro domínio | `pedido_router.py` usando `ProdutoRespostaSchema` | Amarra o formato da sua API ao do outro: mudar a resposta de produtos quebraria pedidos |
-| Escrever no estado de outro domínio | `pedido_service` baixando estoque em `produtos` e dando `commit()` | Quem é dono da transação? Se o pedido falhar depois, o estoque já baixou e não volta |
+| Escrever **direto** na tabela de outro domínio | `pedido_service` fazendo `sessao_db.query(Estoque).update(...)` | A regra do dono não roda. Ele valida saldo, mínimo, bloqueio — nada disso acontece quando outro mexe na tabela por fora |
+| Dar `commit()` dentro da função de borda do outro | `enderecamento_publico.baixar_lote` commitando por conta própria | Quem é dono da transação? Se a finalização falhar depois, a baixa já foi e não volta. Ver a regra 2 da borda, abaixo |
 | Reimplementar a regra do outro | um relatório recalculando desconto com fórmula própria em vez de perguntar a `pedidos` | Passam a existir duas verdades. Elas divergem em silêncio, e ninguém percebe até o cliente reclamar |
 | Importar dado que deveria estar congelado | guardar só `produto_id` e ler o preço atual para exibir um pedido antigo | O preço de hoje não é o preço praticado ontem. Ver "Antes de importar, pergunte se o dado devia ser congelado" |
 
 ### Como se faz: o arquivo de fronteira `<dominio>_publico.py`
 
 Quando um domínio precisa de dado **vivo** de outro (não serve snapshot, não
-serve só a FK), o canal é um arquivo de fronteira criado **na pasta do domínio
-dono do dado**. Regras dele, todas obrigatórias:
+serve só a FK), ou precisa que o outro **altere o estado dele**, o canal é um
+arquivo de fronteira criado **na pasta do domínio dono do dado**. Regras dele,
+todas obrigatórias:
 
 1. Nome: `<dominio>_publico.py` (ex: `cidade_publico.py`), dentro de
    `domains/<dominio>/`.
-2. Só **leitura**. Nenhuma função dele escreve, altera, apaga ou dá `commit()`.
+2. **Nenhuma função dele dá `commit()` ou `rollback()`** — nem as de leitura,
+   nem as de escrita. A função de escrita altera objetos na `Session` que
+   recebeu e devolve; quem abriu a transação decide o desfecho. **Esta é a
+   regra que sustenta todas as outras** — ver "Escrita pela borda" abaixo.
 3. Recebe `Session` e ids primitivos como parâmetro.
 4. Devolve contrato próprio (`ContratoBase`) ou tipo primitivo —
    **nunca o model SQLAlchemy**.
 5. Quem consome importa **apenas esse arquivo**, nunca outro arquivo do domínio.
+6. Função de escrita **valida as invariantes do dono** e levanta exceção quando
+   elas não fecham. Saldo insuficiente é erro de quem guarda o saldo, não de
+   quem pediu a baixa.
 
 ```python
 # FRAGMENTO ILUSTRATIVO — padrão do arquivo de fronteira
@@ -305,7 +372,10 @@ def obter_resumo(sessao_db: Session, cidade_id: str) -> CidadeResumo | None:
 Assim a dependência fica em **um arquivo só, visível e contável por grep** —
 que é exatamente o objetivo da regra.
 
-> **Hoje nenhum `_publico.py` existe no projeto, porque nenhum domínio precisou.**
+> **Existem hoje:** `cidade_publico`, `cliente_publico`, `empresa_publico`,
+> `marca_publico`, `pedido_publico`, `produto_publico`, `usuario_publico`,
+> `estoque_publico` e `enderecamento_publico` — todos nasceram de uma
+> necessidade concreta, e só `enderecamento_publico` tem função de escrita.
 > Não crie um "para o caso de precisar" (ver princípio nº 3: abstrai por dor).
 
 ### Importar *model* é diferente de importar *service*
@@ -345,19 +415,65 @@ tabela, por quem modela**, no momento de criar a tabela. O que este documento
 define é só o critério de decisão acima — a decisão em si é de negócio e
 pertence ao model daquele domínio, não a este arquivo.
 
-### E quando eu preciso mesmo *escrever* em outro domínio?
+### Escrita pela borda: quando um domínio precisa alterar o estado de outro
 
-Isso não se resolve com import — nenhum tipo de import é a resposta certa aqui.
 O caso clássico em ERP é "confirmar pedido → baixar estoque → gerar título
-financeiro": três domínios, uma transação só.
+financeiro": vários domínios, **uma transação só**. No projeto ele apareceu de
+verdade quando a expedição passou a baixar o saldo do endereço ao finalizar a
+separação.
 
-A solução é uma **camada de orquestração** acima dos domínios (um service de
-caso de uso que abre a transação, chama cada domínio e decide o `commit`/
-`rollback`), ou eventos de domínio.
+**A solução é uma função de escrita no `<dominio>_publico.py` do dono**, e não
+uma camada nova. Quem baixa saldo de endereço é o `enderecamento`; a expedição
+só *pede*:
 
-> **Hoje o projeto não tem essa camada, e isso está correto** — nenhum caso de
-> uso precisou dela ainda. Quando o primeiro aparecer, crie a camada nesse
-> momento; não a antecipe.
+```python
+# FRAGMENTO ILUSTRATIVO — app/domains/enderecamento/enderecamento_publico.py
+
+def baixar_lote(sessao_db: Session, estoque_lotes_id: str, quantidade: Decimal) -> list[BaixaAplicada]:
+    """Baixa `quantidade` do lote, distribuindo entre os endereços em que ele
+    está. NÃO dá commit: quem abriu a transação decide o desfecho."""
+```
+
+```python
+# FRAGMENTO ILUSTRATIVO — quem consome (app/domains/expedicao/expedicao_service.py)
+
+enderecamento_publico.baixar_lote(sessao_db, lote_id, quantidade)   # só marca na Session
+processo.data_fim = agora                                            # o estado do próprio domínio
+sessao_db.commit()                                                   # UM commit, no dono da transação
+```
+
+**Por que isto é seguro, sendo que a versão anterior deste documento proibia.**
+A proibição antiga era justificada assim: *"Quem é dono da transação? Se o
+pedido falhar depois, o estoque já baixou e não volta"*. Repare que o problema
+descrito nunca foi a escrita — foi o **`commit()`**. Com a regra 2 da borda
+("nenhuma função dá commit"), o problema simplesmente não existe: a baixa e a
+finalização estão na mesma transação, e o `rollback` desfaz as duas juntas.
+
+**O que a borda de escrita garante, e a escrita direta não:**
+
+- A regra do dono roda. `baixar_lote` recusa saldo insuficiente porque saldo é
+  invariante do `enderecamento`. Um `UPDATE` disparado de fora não recusaria
+  nada.
+- A dependência continua contável por grep, num arquivo só.
+- O dono pode mudar como guarda o saldo (uma tabela, duas, um agregado) sem que
+  ninguém mais precise saber.
+
+**Regras da função de escrita**, além das da borda:
+
+1. Nome de **verbo de negócio**, não de CRUD: `baixar_lote`, `reservar`,
+   `estornar` — nunca `atualizar_quantidade` ou `set_saldo`. O nome tem que
+   dizer o que aconteceu no negócio, senão a borda vira um ORM disfarçado.
+2. Nunca `commit()`, nunca `rollback()`, nunca `flush()` que o chamador não
+   espere.
+3. Levanta exceção quando a invariante do dono não fecha.
+4. É idempotente ou explicitamente não é — e a docstring diz qual dos dois.
+
+> **Quando ainda vale criar uma camada de orquestração:** quando o caso de uso
+> não pertence a nenhum domínio, e sim ao meio deles (ex: um "faturar pedido"
+> que coordena pedidos + estoque + financeiro + fiscal em regras próprias). Aí o
+> caso de uso tem regra própria e precisa de casa. Enquanto o que existe for "um
+> domínio pede uma coisa ao outro", a borda resolve — e é ela que o projeto usa
+> hoje (ver princípio nº 3: abstrai por dor).
 
 ### O conceito, sem ambiguidade
 
@@ -368,14 +484,57 @@ Rode este roteiro na ordem. Pare no primeiro item que descrever o seu caso:
    (cadastro) ou `<dominio>_publico.py`.
 3. **Preciso de um cálculo/regra do outro domínio?** → função de leitura no
    `<dominio>_publico.py` **dele**. Nunca recalcule por conta própria.
-4. **Preciso gravar no outro domínio?** → **pare.** Isso não é import, é
-   orquestração. Ver a seção acima.
+4. **Preciso alterar o estado do outro domínio?** → função de **escrita** no
+   `<dominio>_publico.py` **dele**, com nome de verbo de negócio e **sem
+   `commit()`**. Ver "Escrita pela borda" acima. O que continua proibido é
+   `add`/`update`/`delete`/`commit` na tabela dele a partir do seu service.
 5. **O dado precisa ficar congelado no tempo?** → snapshot na sua própria
    tabela. Não importe nada.
 
 **Se nenhum dos cinco descreve o que você está fazendo, não invente um sexto
 caminho: pare e pergunte.** Um import fora dessas cinco formas é sempre um bug
 de arquitetura, mesmo que o código funcione e os testes passem.
+
+## Onde mora o endereço da mercadoria (e por que não no pedido)
+
+Esta seção existe porque o caso já deu bug uma vez e o padrão vale para
+qualquer campo parecido.
+
+`pedido_itens` **não tem** coluna de endereço. O que o cliente comprou é
+`(produto, lote, quantidade)`; **onde a mercadoria está guardada é assunto do
+nosso galpão**, e mora em dois domínios próprios:
+
+| Domínio | Tabelas | Responsabilidade |
+|---|---|---|
+| `estoque` | `estoque`, `estoque_lotes` | Quanto tem do produto na empresa, e o mesmo saldo aberto por lote (com fabricação e vencimento) |
+| `enderecamento` | `estoque_enderecos`, `estoque_endereco_lote` | Os lugares do galpão, e em quais deles cada lote está |
+
+A relação lote ↔ endereço é **muitos-para-muitos de verdade**: o mesmo lote se
+espalha por vários endereços, e o mesmo endereço guarda lotes de produtos
+diferentes. Era por espremer isso numa coluna `endereco_produto` na linha do
+pedido que a consulta da integração devolvia **uma linha de pedido por
+endereço, cada uma com a quantidade INTEIRA** — um pedido de 14.000 un entrava
+com 42.000 (ver as migrações `c9e4a71f5b38` e `d2b7f4e9a610`).
+
+**Como a expedição chega no endereço**, sem consultar tabela alheia:
+
+```
+item do pedido (produto_id, lote)
+  → estoque_publico.obter_ids_de_lotes(...)        # id em estoque_lotes
+  → enderecamento_publico.obter_descricoes_por_lote(...)   # list[str]
+```
+
+Duas fronteiras de leitura, duas consultas para o pedido inteiro, e o contrato
+da expedição devolve `enderecos: list[str]` — nunca um campo único. Lista vazia
+significa "lote ainda não endereçado", que é operação normal e não erro: a
+separação segue e o operador procura, como já fazia.
+
+**A regra geral por trás disso:** antes de pôr um campo numa tabela, pergunte
+de quem é o fato. Se o dado descreve o **nosso** processo (onde está, quem
+separou, quando conferiu) e não o **documento** (o que foi comprado, por quanto,
+para quem), ele não pertence ao documento — mesmo que seja conveniente tê-lo
+ali. E se a cardinalidade real for "vários", uma coluna de texto nunca é a
+resposta; a resposta é uma tabela.
 
 ## Validação de id por foreign key
 

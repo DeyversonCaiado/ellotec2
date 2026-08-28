@@ -26,6 +26,10 @@ export class EmpresaForm implements OnInit {
     codigo: [''],
     razaoSocial: ['', Validators.required],
     nomeFantasia: ['', Validators.required],
+    // O apelido precisa estar no formulário, e não só no model: o PUT manda o
+    // objeto inteiro, então um campo ausente aqui chegava ao backend como nulo
+    // e APAGAVA o apelido a cada edição de empresa.
+    apelido: [''],
     cnpj: ['', Validators.required],
     ativo: [true],
   });
@@ -40,7 +44,13 @@ export class EmpresaForm implements OnInit {
 
     this.service.obterPorId(id).subscribe((empresa) => {
       this.carregando.set(false);
-      if (empresa) this.form.patchValue({ ...empresa, codigo: empresa.codigo ?? '' });
+      if (empresa) {
+        this.form.patchValue({
+          ...empresa,
+          codigo: empresa.codigo ?? '',
+          apelido: empresa.apelido ?? '',
+        });
+      }
     });
   }
 

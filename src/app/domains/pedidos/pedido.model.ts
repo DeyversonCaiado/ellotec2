@@ -10,11 +10,20 @@ export interface ItemPedido {
   produtoDescricao: string;
   quantidade: number;
   precoUnitario: number;
+  /** Como o ERP identifica esta linha: empresa + pedido + produto. O ERP não
+   *  dá id próprio ao item — é o trio que aponta para uma linha só, porque cada
+   *  filial numera pedido de forma independente e o mesmo produto se repete em
+   *  pedidos diferentes. Nulos em item lançado pela tela, que não vem de
+   *  sistema nenhum. */
+  empresaSistemaOrigemId?: string | null;
+  pedidoSistemaOrigemId?: string | null;
+  produtoSistemaOrigemId?: string | null;
 }
 
 export interface Pedido {
   id: string;
-  numero: string;
+  /** Nulo enquanto a origem externa não tiver dado um número ao pedido. */
+  numero: string | null;
   dataPedido: string;
   clienteId: string;
   cliente: { id: string; nomeFantasia: string; cnpj: string };
@@ -71,5 +80,5 @@ export function calcularTotalPedido(itens: ItemPedido[]): number {
 // sistemaOrigemId — quando presente, é ele que representa o pedido pra quem
 // está olhando, não o número sequencial interno.
 export function numeroExibicaoPedido(pedido: Pedido): string {
-  return pedido.sistemaOrigemId || pedido.numero;
+  return pedido.sistemaOrigemId || pedido.numero || '—';
 }

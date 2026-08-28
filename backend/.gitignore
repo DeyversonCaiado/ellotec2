@@ -4,3 +4,10 @@ __pycache__/
 .env
 *.db
 .pytest_cache/
+
+# Logs de execução (gerados em runtime, nunca versionados)
+log/
+*.log
+
+# Instant Client do Oracle, se copiado para dentro do projeto
+instantclient*/

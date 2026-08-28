@@ -123,7 +123,9 @@ class ItemPedidoResumo(ContratoBase):
     produto_codigo: str
     produto_descricao: str
     quantidade: int
-    endereco_produto: str | None
+    # O par (produto_id, lote) é por onde a expedição chega no endereço, via
+    # estoque_publico + enderecamento_publico. O endereço em si não existe
+    # nesta fronteira porque não existe no pedido.
     lote: str | None
 
 
@@ -131,7 +133,7 @@ class PedidoResumo(ContratoBase):
     """Contrato próprio da fronteira — não é o model, não é o schema do router."""
 
     id: str
-    numero: str
+    numero: str | None
     sistema_origem_id: str | None
     data_pedido: date
     cliente_id: str
@@ -169,12 +171,104 @@ def _para_resumo(pedido: Pedido) -> PedidoResumo:
                 produto_codigo=item.produto_codigo,
                 produto_descricao=item.produto_descricao,
                 quantidade=item.quantidade,
-                endereco_produto=item.endereco_produto,
                 lote=item.lote,
             )
+            # Linha apagada some da fronteira: quem lê daqui (a expedição)
+            # pergunta "o que este pedido tem para separar hoje?". Devolver
+            # linha removida pela integração colocaria de volta na lista do
+            # coletor exatamente o que o ERP tirou.
             for item in pedido.itens
+            if item.sync_deleted_at is None
         ],
     )
+
+
+def _consulta_para_expedicao(
+    sessao_db: Session,
+    data_inicio: date,
+    data_fim: date,
+    termo: str | None,
+    status_chaves: list[str] | None,
+    ids_permitidos: list[str] | None,
+    ids_excluidos: list[str] | None,
+    empresa_id: str | None,
+):
+    """O filtro da tela de expedição, sem ordenação e sem paginação.
+
+    Existe porque duas perguntas usam exatamente os mesmos critérios: "me dá a
+    página" (`listar_para_expedicao`) e "me dá os ids para contar por situação"
+    (`listar_ids_para_expedicao`). Montar o filtro nos dois lugares faria os
+    contadores da tela divergirem da lista que eles contam — e divergiriam em
+    silêncio, no dia em que alguém acrescentasse um critério só num deles.
+    """
+    consulta = sessao_db.query(Pedido).filter(
+        Pedido.sync_deleted_at.is_(None),
+        Pedido.data_pedido >= data_inicio,
+        Pedido.data_pedido <= data_fim,
+    )
+
+    if ids_permitidos is not None:
+        # Recorte de visibilidade decidido por quem chamou (hoje: a expedição,
+        # que limita o operador aos pedidos atribuídos a ele). Aqui é só o
+        # filtro; a regra de quem vê o quê não é deste domínio.
+        consulta = consulta.filter(Pedido.id.in_(ids_permitidos))
+
+    if ids_excluidos:
+        consulta = consulta.filter(Pedido.id.notin_(ids_excluidos))
+
+    if empresa_id:
+        consulta = consulta.filter(Pedido.empresa_id == empresa_id)
+
+    if status_chaves:
+        # Join pelo catálogo em vez de resolver as chaves para ids antes: é uma
+        # consulta a menos, e `pedido_status.chave` é único e indexado.
+        consulta = consulta.join(Pedido.status).filter(PedidoStatus.chave.in_(status_chaves))
+
+    termo = (termo or "").strip()
+    if termo:
+        curinga = f"%{termo}%"
+        consulta = consulta.filter(
+            or_(
+                Pedido.numero.ilike(curinga),
+                Pedido.sistema_origem_id.ilike(curinga),
+                Pedido.cliente_nome_fantasia.ilike(curinga),
+            )
+        )
+
+    return consulta
+
+
+def listar_ids_para_expedicao(
+    sessao_db: Session,
+    data_inicio: date,
+    data_fim: date,
+    termo: str | None,
+    status_chaves: list[str] | None = None,
+    ids_permitidos: list[str] | None = None,
+    ids_excluidos: list[str] | None = None,
+    empresa_id: str | None = None,
+) -> list[str]:
+    """Só os ids que a busca da expedição encontra, sem paginar.
+
+    É o que permite à expedição contar quantos pedidos caem em cada situação
+    (não iniciados, em separação, concluídos…) para a MESMA busca: ela cruza
+    estes ids com os recortes das tabelas dela, que são pequenos.
+
+    Devolve id, e não o pedido inteiro, justamente para isso não virar um
+    "listar tudo" disfarçado: uma coluna, sem `relationship` carregada junto. O
+    período já limita o conjunto — a tela sempre pede um intervalo de datas.
+    """
+    linhas = _consulta_para_expedicao(
+        sessao_db,
+        data_inicio,
+        data_fim,
+        termo,
+        status_chaves,
+        ids_permitidos,
+        ids_excluidos,
+        empresa_id,
+    ).with_entities(Pedido.id).all()
+    return [id_ for (id_,) in linhas]
 
 
 def listar_para_expedicao(
@@ -225,39 +319,16 @@ def listar_para_expedicao(
             f"Use um destes: {', '.join(sorted(COLUNAS_ORDENAVEIS))}."
         )
 
-    consulta = sessao_db.query(Pedido).filter(
-        Pedido.sync_deleted_at.is_(None),
-        Pedido.data_pedido >= data_inicio,
-        Pedido.data_pedido <= data_fim,
+    consulta = _consulta_para_expedicao(
+        sessao_db,
+        data_inicio,
+        data_fim,
+        termo,
+        status_chaves,
+        ids_permitidos,
+        ids_excluidos,
+        empresa_id,
     )
-
-    if ids_permitidos is not None:
-        # Recorte de visibilidade decidido por quem chamou (hoje: a expedição,
-        # que limita o operador aos pedidos atribuídos a ele). Aqui é só o
-        # filtro; a regra de quem vê o quê não é deste domínio.
-        consulta = consulta.filter(Pedido.id.in_(ids_permitidos))
-
-    if ids_excluidos:
-        consulta = consulta.filter(Pedido.id.notin_(ids_excluidos))
-
-    if empresa_id:
-        consulta = consulta.filter(Pedido.empresa_id == empresa_id)
-
-    if status_chaves:
-        # Join pelo catálogo em vez de resolver as chaves para ids antes: é uma
-        # consulta a menos, e `pedido_status.chave` é único e indexado.
-        consulta = consulta.join(Pedido.status).filter(PedidoStatus.chave.in_(status_chaves))
-
-    termo = (termo or "").strip()
-    if termo:
-        curinga = f"%{termo}%"
-        consulta = consulta.filter(
-            or_(
-                Pedido.numero.ilike(curinga),
-                Pedido.sistema_origem_id.ilike(curinga),
-                Pedido.cliente_nome_fantasia.ilike(curinga),
-            )
-        )
 
     total = consulta.count()
     pedidos = (

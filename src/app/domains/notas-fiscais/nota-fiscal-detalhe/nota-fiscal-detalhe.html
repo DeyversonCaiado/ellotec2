@@ -1,0 +1,184 @@
+<div class="p-4 sm:p-6 max-w-[1400px] mx-auto">
+
+  @if (carregando()) {
+    <div class="p-12 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm gap-2">
+      <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+      </svg>
+      Carregando nota fiscal...
+    </div>
+  } @else if (!nota()) {
+    <div class="p-12 text-center text-gray-400 dark:text-gray-500 text-sm">Nota fiscal não encontrada.</div>
+  } @else {
+    @let n = nota()!;
+
+    <app-page-header
+      [titulo]="'Nota ' + n.numero + '/' + n.serie"
+      [subtitulo]="(n.tipoOperacao === 'entrada' ? 'Entrada' : 'Saída') + ' · modelo ' + n.modelo + ' · ' + (n.naturezaOperacao || 'sem natureza informada')"
+    >
+      <div class="flex items-center gap-2">
+        <a routerLink="/notas-fiscais" class="inline-flex items-center gap-1.5 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800">
+          <app-icon name="arrow-left" class="size-4" />
+          Voltar
+        </a>
+        <button
+          type="button"
+          (click)="baixarXml()"
+          [disabled]="baixandoXml()"
+          class="inline-flex items-center gap-2 text-sm font-semibold bg-brand-600 text-white rounded-lg px-4 py-2.5 hover:bg-brand-700 disabled:opacity-40"
+        >
+          <app-icon name="file-text" class="size-4" />
+          {{ baixandoXml() ? 'Buscando...' : 'Baixar XML' }}
+        </button>
+      </div>
+    </app-page-header>
+
+    <!-- Chave de acesso: identidade do documento na SEFAZ. Fonte mono e
+         quebrando em qualquer ponto porque são 44 dígitos sem espaço. -->
+    @if (n.chaveAcesso) {
+      <div class="mb-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Chave de acesso</p>
+        <p class="text-sm font-mono text-gray-800 dark:text-gray-100 break-all">{{ n.chaveAcesso }}</p>
+        @if (n.protocoloAutorizacao) {
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            Protocolo {{ n.protocoloAutorizacao }} · {{ n.dataAutorizacao | date:'dd/MM/yyyy HH:mm' }}
+          </p>
+        }
+      </div>
+    }
+
+    <div class="grid gap-4 lg:grid-cols-2 mb-4">
+      <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Emitente</p>
+        <p class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ n.emitenteRazaoSocial }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ n.emitenteCnpjCpf }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+          {{ n.emitenteMunicipio || '—' }}{{ n.emitenteUf ? ' / ' + n.emitenteUf : '' }}
+          @if (n.emitenteInscricaoEstadual) { · IE {{ n.emitenteInscricaoEstadual }} }
+        </p>
+      </div>
+
+      <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Destinatário</p>
+        <p class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ n.destinatarioRazaoSocial }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ n.destinatarioCnpjCpf }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+          {{ n.destinatarioMunicipio || '—' }}{{ n.destinatarioUf ? ' / ' + n.destinatarioUf : '' }}
+          @if (n.destinatarioInscricaoEstadual) { · IE {{ n.destinatarioInscricaoEstadual }} }
+        </p>
+      </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div>
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Emissão</p>
+        <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.dataEmissao | date:'dd/MM/yyyy HH:mm' }}</p>
+      </div>
+      <div>
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Produtos</p>
+        <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.valorProdutos | currency:'BRL' }}</p>
+      </div>
+      <div>
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Frete</p>
+        <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.valorFrete | currency:'BRL' }}</p>
+      </div>
+      <div>
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Total da nota</p>
+        <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ n.valorTotal | currency:'BRL' }}</p>
+      </div>
+      <div>
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">ICMS</p>
+        <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.valorIcms | currency:'BRL' }}</p>
+      </div>
+      <div>
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">IPI</p>
+        <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.valorIpi | currency:'BRL' }}</p>
+      </div>
+      <div>
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Volumes</p>
+        <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.quantidadeVolumes ?? '—' }}</p>
+      </div>
+      <div>
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Peso bruto</p>
+        <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.pesoBruto ? (n.pesoBruto | number:'1.3-3') + ' kg' : '—' }}</p>
+      </div>
+    </div>
+
+    @if (n.transportadoraNome) {
+      <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 mb-4">
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Transportadora</p>
+        <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.transportadoraNome }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ n.transportadoraCnpjCpf || '—' }}</p>
+      </div>
+    }
+
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+      <div class="p-4 border-b border-gray-100 dark:border-gray-800">
+        <p class="text-sm font-semibold text-gray-800 dark:text-gray-100">
+          Itens · {{ n.itens.length }} {{ n.itens.length === 1 ? 'linha' : 'linhas' }}
+        </p>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-100 dark:divide-gray-800">
+          <thead class="bg-gray-50 dark:bg-gray-800/60">
+            <tr>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">#</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Produto</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">NCM / CFOP</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Lote / Validade</th>
+              <th class="px-5 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Qtd.</th>
+              <th class="px-5 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Preço unit.</th>
+              <th class="px-5 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Total</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+            @for (item of n.itens; track item.id) {
+              <tr class="hover:bg-gray-50/60 dark:hover:bg-gray-800/40">
+                <td class="px-5 py-3.5 text-sm text-gray-500 dark:text-gray-400">{{ item.numeroItem }}</td>
+                <td class="px-5 py-3.5">
+                  <p class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ item.produtoDescricao }}</p>
+                  <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">
+                    {{ item.produtoCodigo }}
+                    @if (item.codigoBarras) { · {{ item.codigoBarras }} }
+                  </p>
+                  <!-- Item sem produtoId é normal em nota de entrada: o item é
+                       do fornecedor e pode não existir no cadastro daqui. -->
+                  @if (!item.produtoId) {
+                    <p class="text-xs text-amber-600 dark:text-amber-400 mt-0.5">Sem produto cadastrado</p>
+                  }
+                </td>
+                <td class="px-5 py-3.5 text-xs text-gray-500 dark:text-gray-400 font-mono">
+                  {{ item.ncm || '—' }} / {{ item.cfop || '—' }}
+                </td>
+                <td class="px-5 py-3.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ item.lote || '—' }}
+                  @if (item.validade) { <br />{{ item.validade | date:'dd/MM/yyyy' }} }
+                </td>
+                <td class="px-5 py-3.5 text-sm text-gray-600 dark:text-gray-300 text-end">
+                  {{ item.quantidade | number:'1.0-4' }} {{ item.unidade }}
+                </td>
+                <!-- Até 6 casas na exibição: o leiaute permite 10, mas mostrar
+                     todas polui a coluna. O valor cheio está no XML. -->
+                <td class="px-5 py-3.5 text-sm text-gray-600 dark:text-gray-300 text-end font-mono">
+                  {{ item.precoUnitario | number:'1.2-6' }}
+                </td>
+                <td class="px-5 py-3.5 text-sm text-gray-800 dark:text-gray-100 text-end font-semibold">
+                  {{ item.valorTotalItem | currency:'BRL' }}
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    @if (n.informacoesComplementares) {
+      <div class="mt-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+        <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Informações complementares</p>
+        <p class="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-line">{{ n.informacoesComplementares }}</p>
+      </div>
+    }
+  }
+</div>

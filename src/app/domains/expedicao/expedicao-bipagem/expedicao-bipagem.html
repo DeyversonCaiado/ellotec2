@@ -112,7 +112,9 @@
       <div class="mt-1.5 text-sm font-mono text-gray-600 dark:text-gray-300 leading-relaxed">
         <p>{{ it.produtoCodigo }}</p>
         @if (it.produtoUnidade) { <p>Unidade {{ it.produtoUnidade }}</p> }
-        @if (it.enderecoProduto) { <p>Endereço {{ it.enderecoProduto }}</p> }
+        @for (endereco of it.enderecos; track endereco.enderecoId) {
+          <p>Endereço {{ endereco.descricao }} · {{ endereco.quantidade }}</p>
+        }
         @if (it.lote) { <p>Lote {{ it.lote }}</p> }
         @if (it.produtoMarcaNome) { <p>Marca {{ it.produtoMarcaNome }}</p> }
         @if (it.produtoCodigoBarraNotas) { <p>Nota {{ it.produtoCodigoBarraNotas }}</p> }

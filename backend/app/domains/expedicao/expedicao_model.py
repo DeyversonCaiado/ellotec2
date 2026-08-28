@@ -76,8 +76,24 @@ class Separacao(Base, IdMixin, SyncMixin):
     __tablename__ = "expedicao_separacoes"
 
     pedido_id: Mapped[str] = mapped_column(ForeignKey("pedidos.id"), nullable=False, index=True)
+    # De quem é o TRABALHO. Continua sendo o operador mesmo quando quem clicou
+    # foi o gerente — é por isso que o par de colunas abaixo existe.
     usuario_inicio_id: Mapped[str] = mapped_column(ForeignKey("usuarios.id"), nullable=False, index=True)
     usuario_fim_id: Mapped[str | None] = mapped_column(ForeignKey("usuarios.id"), nullable=True, index=True)
+    # Quem CLICOU, quando não foi o próprio operador. NULL = o operador abriu e
+    # fechou sozinho, que é o caso normal.
+    #
+    # O galpão nem sempre tem coletor para todo mundo: o gerente despacha uma
+    # pessoa para separar no papel, e depois registra o início e o fim aqui. Sem
+    # estas duas colunas, o sistema diria que o gerente separou o pedido (falso)
+    # ou que o operador operou o sistema (também falso) — e o relatório de
+    # produtividade sairia errado nos dois casos.
+    usuario_gestor_inicio_id: Mapped[str | None] = mapped_column(
+        ForeignKey("usuarios.id"), nullable=True, index=True
+    )
+    usuario_gestor_fim_id: Mapped[str | None] = mapped_column(
+        ForeignKey("usuarios.id"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="em_andamento")
     data_inicio: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True, default=None)
     # Quando a PRIMEIRA leitura foi registrada. Diferente de `data_inicio`, que
@@ -131,6 +147,13 @@ class Conferencia(Base, IdMixin, SyncMixin):
     pedido_id: Mapped[str] = mapped_column(ForeignKey("pedidos.id"), nullable=False, index=True)
     usuario_inicio_id: Mapped[str] = mapped_column(ForeignKey("usuarios.id"), nullable=False, index=True)
     usuario_fim_id: Mapped[str | None] = mapped_column(ForeignKey("usuarios.id"), nullable=True, index=True)
+    # Mesmo papel do par em Separacao — ver lá.
+    usuario_gestor_inicio_id: Mapped[str | None] = mapped_column(
+        ForeignKey("usuarios.id"), nullable=True, index=True
+    )
+    usuario_gestor_fim_id: Mapped[str | None] = mapped_column(
+        ForeignKey("usuarios.id"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="em_andamento")
     data_inicio: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True, default=None)
     # Quando a PRIMEIRA leitura foi registrada. Diferente de `data_inicio`, que

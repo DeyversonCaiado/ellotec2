@@ -56,17 +56,22 @@
            em expedicao.model.ts). Escolher recarrega do servidor: o recorte é
            sobre a fila inteira, não sobre a página que está na tela.
 
-           Os botões não têm mais contagem. Ela vinha da página carregada, e com
-           o filtro no servidor mostraria "Em separação (50)" numa fila de 900 —
-           número errado é pior que número nenhum. A contagem certa exige uma
-           consulta de agregação própria, que ninguém pediu ainda. -->
+           A contagem ao lado do rótulo vem do servidor
+           (`contagensPorSituacao`) e cobre o PERÍODO inteiro, ignorando os
+           demais filtros. Por isso ela não muda enquanto a pessoa digita na
+           busca — é um painel do galpão, e é isso que a torna útil para
+           navegar: "tem 3 parados, vou ali ver".
+
+           Já existiu uma contagem aqui feita sobre a página carregada, e ela
+           mentia: com o filtro no servidor mostrava "Em separação (50)" numa
+           fila de 900. -->
       <!-- Abaixo de 800px os botões quebram em várias linhas e empurram a lista
            pra fora da tela — nessa faixa a mesma escolha vira um select. -->
       <!-- Responsividade via styleClass, não via class: o host do p-select tem
            [class]="cn(cx('root'), styleClass)", que sobrescreve o class estático. -->
       <p-select
         styleClass="w-full min-[800px]:hidden"
-        [options]="opcoes"
+        [options]="opcoesComContagem()"
         optionLabel="rotulo"
         optionValue="chave"
         [ngModel]="situacao()"
@@ -88,6 +93,16 @@
             "
           >
             {{ opcao.rotulo }}
+            @if (contagem(opcao.chave) !== null) {
+              <span
+                class="inline-flex items-center justify-center min-w-5 text-xs font-semibold rounded-full px-1.5 py-0.5"
+                [class]="
+                  situacao() === opcao.chave
+                    ? 'bg-brand-600 text-white'
+                    : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+                "
+              >{{ contagem(opcao.chave) }}</span>
+            }
           </button>
         }
       </div>
@@ -196,7 +211,14 @@
            lista de rótulo + valor, com as ações na última linha. -->
       <div class="divide-y divide-gray-100 dark:divide-gray-800 min-[800px]:hidden">
         @for (pedido of pedidos(); track pedido.pedidoId) {
-          <dl class="p-4 space-y-2 text-sm">
+          <!-- Vermelho = endereçamento inconsistente, o mesmo código de cor dos
+               itens no detalhe. Serve para o coordenador ver o problema NA FILA,
+               antes de mandar alguém separar — descobrir isso com o operador na
+               frente da prateleira é o que custa caro. -->
+          <dl class="p-4 space-y-2 text-sm" [class]="pedido.bloqueioEnderecamento ? 'bg-red-50 dark:bg-red-950/40' : ''">
+            @if (pedido.bloqueioEnderecamento) {
+              <p class="text-xs font-semibold text-red-700 dark:text-red-300">{{ pedido.bloqueioEnderecamento }}</p>
+            }
             <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
               <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Pedido</dt>
               <dd>
@@ -397,7 +419,15 @@
           </thead>
           <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
             @for (pedido of pedidos(); track pedido.pedidoId) {
-              <tr class="hover:bg-gray-50/60 dark:hover:bg-gray-800/40" [class.bg-brand-50/60]="estaSelecionado(pedido.pedidoId)">
+              <!-- A seleção continua ganhando do vermelho: quando o
+                   coordenador marca linhas para atribuir, ele precisa ver o que
+                   marcou. O aviso não se perde — o título do endereçamento
+                   segue no número do pedido. -->
+              <tr
+                class="hover:bg-gray-50/60 dark:hover:bg-gray-800/40"
+                [class]="pedido.bloqueioEnderecamento ? 'bg-red-50 dark:bg-red-950/40' : ''"
+                [class.bg-brand-50/60]="estaSelecionado(pedido.pedidoId)"
+              >
                 @if (podeAtribuir()) {
                   <td class="ps-5 pe-2 py-3.5">
                     <input
@@ -417,10 +447,15 @@
                     [title]="pedido.empresaNome"
                   >{{ pedido.empresaApelido || pedido.empresaNome }}</span>
                 </td>
-                <td class="px-5 py-3.5">
+                <td class="px-5 py-3.5" [title]="pedido.bloqueioEnderecamento ?? ''">
                   <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 font-mono">{{ numeroExibicao(pedido) }}</p>
                   <!-- Status do ERP, no mesmo peso do CNPJ na coluna do cliente. -->
                   <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ pedido.statusPedido }}</p>
+                  <!-- A frase inteira não cabe na coluna; o resumo aqui e o
+                       texto completo no title do <td>. -->
+                  @if (pedido.bloqueioEnderecamento) {
+                    <p class="text-xs font-semibold text-red-700 dark:text-red-300 mt-0.5">Endereçamento inconsistente</p>
+                  }
                 </td>
                 <td class="px-5 py-3.5 text-sm text-gray-600 dark:text-gray-300">{{ pedido.dataPedido | date:'dd/MM/yyyy' }}</td>
                 <td class="px-5 py-3.5">
@@ -490,8 +525,12 @@
 
                 @for (etapa of [pedido.separacao, pedido.conferencia]; track $index) {
                   <td class="px-5 py-3.5 whitespace-nowrap">
-                    @if (etapa.dataPrimeiroBipe) {
-                      <p class="text-xs text-gray-600 dark:text-gray-300 tabular-nums">{{ etapa.dataPrimeiroBipe | date:'dd/MM/yyyy HH:mm:ss' }}</p>
+                    <!-- `inicioEtapa` e não `dataPrimeiroBipe`: a etapa
+                         delegada não tem bipe nenhum, e olhando só o bipe a
+                         coluna mostrava um traço numa etapa que começou e
+                         terminou. Ver `inicioDaEtapa` no model. -->
+                    @if (inicioEtapa(etapa); as inicio) {
+                      <p class="text-xs text-gray-600 dark:text-gray-300 tabular-nums">{{ inicio | date:'dd/MM/yyyy HH:mm:ss' }}</p>
                       @if (tempoEtapa(etapa); as duracao) {
                         <span class="mt-1 inline-flex items-center text-xs font-semibold rounded-full px-2 py-0.5 tabular-nums" [class]="duracao.emAndamento ? 'text-amber-700 bg-amber-50 dark:bg-amber-900/30' : 'text-gray-600 bg-gray-100 dark:bg-gray-800 dark:text-gray-300'">
                           {{ duracao.texto }}

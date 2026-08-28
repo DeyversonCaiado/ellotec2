@@ -10,7 +10,7 @@ reais gravadas em `usuario_permissoes`.
 """
 
 from collections.abc import Generator
-from datetime import date  # noqa: F401  usado nos testes de período
+from datetime import date, datetime, timezone  # noqa: F401  usado nos testes de período
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,8 +25,15 @@ from app.core.database.conexao import Base, obter_sessao
 from app.domains.cidades.cidade_model import Cidade
 from app.domains.clientes.cliente_model import Cliente
 from app.domains.empresas.empresa_model import Empresa
+from app.domains.enderecamento.enderecamento_model import (
+    EstoqueEndereco,
+    EstoqueEnderecoLote,
+)
+from app.domains.estoque.estoque_model import EstoqueLote
+from app.domains.expedicao.expedicao_model import ExpedicaoAtribuicao, Separacao
 from app.domains.marcas.marca_model import Marca
-from app.domains.pedidos import pedido_publico
+from app.domains.pedidos import pedido_publico, pedido_service
+from app.domains.pedidos.pedido_contrato import PedidoAtualizarSchema
 from app.domains.pedidos.pedido_model import Pedido, PedidoItem, PedidoStatus
 from app.domains.produtos.produto_model import Produto, ProdutoCodigoBarras
 from app.domains.usuarios.cargo_model import Cargo
@@ -46,7 +53,13 @@ PERMISSOES_OPERADOR = [
 # que a listagem devolve: coordenador vê a fila inteira, operador vê só o que
 # foi atribuído a ele. O usuário padrão dos testes é o coordenador, porque a
 # maioria deles exercita a fila completa.
-PERMISSOES_COORDENADOR = [*PERMISSOES_OPERADOR, "expedicao.atribuir"]
+PERMISSOES_COORDENADOR = [
+    *PERMISSOES_OPERADOR,
+    "expedicao.atribuir",
+    # Quem distribui é também quem executa em nome de quem não tem coletor.
+    # `outro` fica sem esta chave de propósito — é ele que prova o 403.
+    "expedicao.delegar",
+]
 
 CODIGO_BARRAS_A = "7891111111111"
 CODIGO_BARRAS_B = "7892222222222"
@@ -175,7 +188,6 @@ def ambiente() -> Generator[tuple[TestClient, Session, Cenario, dict], None, Non
                 produto_descricao="Nutrison EN 1000ml",
                 quantidade=3,
                 preco_unitario=10,
-                endereco_produto="07-14-08-03-01",
                 lote="111580721",
             ),
             PedidoItem(
@@ -184,7 +196,6 @@ def ambiente() -> Generator[tuple[TestClient, Session, Cenario, dict], None, Non
                 produto_descricao="Nutrison Prot Plus",
                 quantidade=2,
                 preco_unitario=20,
-                endereco_produto="07-14-08-03-02",
                 lote="111616986",
             ),
         ],
@@ -209,6 +220,60 @@ def ambiente() -> Generator[tuple[TestClient, Session, Cenario, dict], None, Non
         ],
     )
     sessao.add_all([pedido, pedido_orcamento])
+    sessao.commit()
+
+    # O endereço da mercadoria NÃO está mais na linha do pedido: a expedição
+    # chega nele pelo par (produto, lote) do item -> `estoque_lotes` ->
+    # `estoque_endereco_lote` -> `estoque_enderecos`.
+    #
+    # O lote A é endereçado em DOIS lugares de propósito — é o caso que a
+    # coluna antiga não sabia representar e que motivou a mudança. O lote B fica
+    # com um endereço só, e o pedido-orçamento sem nenhum, para o teste também
+    # cobrir a mercadoria ainda não endereçada.
+    lote_a = EstoqueLote(
+        produto_id=produto_a.id,
+        lote="111580721",
+        quantidade=100,
+        empresa_id=empresa.id,
+    )
+    lote_b = EstoqueLote(
+        produto_id=produto_b.id,
+        lote="111616986",
+        quantidade=50,
+        empresa_id=empresa.id,
+    )
+    endereco_1 = EstoqueEndereco(descricao="07-14-08-03-01", empresa_id=empresa.id)
+    endereco_2 = EstoqueEndereco(descricao="07-14-08-03-02", empresa_id=empresa.id)
+    endereco_3 = EstoqueEndereco(descricao="01-02-03-04-05", empresa_id=empresa.id)
+    sessao.add_all([lote_a, lote_b, endereco_1, endereco_2, endereco_3])
+    sessao.commit()
+
+    sessao.add_all(
+        [
+            # Item A pede 3 e está espalhado em dois endereços (2 + 1) — é o
+            # caso que a coluna antiga não sabia representar. Item B pede 2 e
+            # está inteiro num endereço só. Os dois fecham a consistência, senão
+            # TODO teste que inicia um processo tomaria 409.
+            EstoqueEnderecoLote(
+                estoque_enderecos_id=endereco_1.id,
+                estoque_lotes_id=lote_a.id,
+                empresa_id=empresa.id,
+                quantidade=2,
+            ),
+            EstoqueEnderecoLote(
+                estoque_enderecos_id=endereco_3.id,
+                estoque_lotes_id=lote_a.id,
+                empresa_id=empresa.id,
+                quantidade=1,
+            ),
+            EstoqueEnderecoLote(
+                estoque_enderecos_id=endereco_2.id,
+                estoque_lotes_id=lote_b.id,
+                empresa_id=empresa.id,
+                quantidade=2,
+            ),
+        ]
+    )
     sessao.commit()
 
     cenario = Cenario(
@@ -348,6 +413,273 @@ def test_detalhe_traz_cliente_vendedor_e_proxima_etapa(ambiente):
     assert len(detalhe["itens"]) == 2
     # múltiplo de venda vem do cadastro vivo do produto, não do snapshot do item
     assert detalhe["itens"][0]["quantidadeMultiplaVenda"] == 1
+
+
+def test_detalhe_traz_os_enderecos_do_lote_e_nao_um_campo_do_pedido(ambiente):
+    """O endereço saiu de `pedido_itens` e virou uma LISTA vinda do
+    endereçamento.
+
+    O item A está em dois endereços — a situação real do galpão que a coluna
+    antiga não sabia representar. Era por espremer isso num campo só que a
+    consulta da integração devolvia uma linha de pedido por endereço, cada uma
+    com a quantidade inteira.
+    """
+    client, _, cenario, _ = ambiente
+
+    detalhe = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+    por_item = {item["pedidoItemId"]: item for item in detalhe["itens"]}
+
+    # ordenados pela descrição, para a tela do coletor não trocar a ordem entre
+    # dois carregamentos
+    assert [(e["descricao"], e["quantidade"]) for e in por_item[cenario.item_a_id]["enderecos"]] == [
+        ("01-02-03-04-05", 1.0),
+        ("07-14-08-03-01", 2.0),
+    ]
+    assert por_item[cenario.item_a_id]["quantidadeEnderecada"] == 3.0
+    assert [(e["descricao"], e["quantidade"]) for e in por_item[cenario.item_b_id]["enderecos"]] == [
+        ("07-14-08-03-02", 2.0)
+    ]
+    # e o campo antigo não existe mais no contrato
+    assert "enderecoProduto" not in por_item[cenario.item_a_id]
+
+
+def test_endereco_zerado_nao_aparece_para_o_operador(ambiente):
+    """Endereço com saldo zero some da lista do coletor.
+
+    Zerado não é "onde o lote está" — é vínculo que sobrou de uma baixa ou que a
+    integração criou sem informar quantidade. Mostrar manda o operador até uma
+    prateleira vazia. Quem precisa ver o zero é a tela de endereçamento, para
+    descobrir que falta informar a quantidade.
+    """
+    client, sessao, cenario, _ = ambiente
+
+    # o item A tem dois endereços (2 + 1); zeramos um e reforçamos o outro para
+    # a consistência continuar fechando e o teste isolar só a exibição
+    vinculos = {
+        endereco.descricao: vinculo
+        for vinculo, endereco in sessao.query(EstoqueEnderecoLote, EstoqueEndereco).join(
+            EstoqueEndereco, EstoqueEndereco.id == EstoqueEnderecoLote.estoque_enderecos_id
+        )
+    }
+    vinculos["01-02-03-04-05"].quantidade = 0
+    vinculos["07-14-08-03-01"].quantidade = 3
+    sessao.commit()
+
+    detalhe = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+    item_a = next(i for i in detalhe["itens"] if i["pedidoItemId"] == cenario.item_a_id)
+
+    assert [e["descricao"] for e in item_a["enderecos"]] == ["07-14-08-03-01"]
+    # e a soma não muda por tirar o zero — o pedido continua liberado
+    assert item_a["quantidadeEnderecada"] == 3.0
+    assert item_a["bloqueio"] is None
+    assert detalhe["podeIniciar"] is True
+
+
+def test_lote_sem_enderecamento_trava_o_pedido(ambiente):
+    """Mercadoria não endereçada passou a ser bloqueio, não "o operador que se
+    vire".
+
+    Quando o endereço era um campo na linha do pedido, vir vazio era só uma
+    informação a menos. Agora o endereçamento é o que diz ao operador quanto
+    pegar em cada prateleira — sem ele, ele não tem o que executar.
+    """
+    client, sessao, cenario, _ = ambiente
+
+    sessao.query(EstoqueEnderecoLote).delete()
+    sessao.commit()
+
+    detalhe = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+
+    assert [item["enderecos"] for item in detalhe["itens"]] == [[], []]
+    assert detalhe["podeIniciar"] is False
+    assert "Endereçamento insuficiente" in detalhe["bloqueioEnderecamento"]
+    for item in detalhe["itens"]:
+        assert "Endereçamento insuficiente" in item["bloqueio"]
+
+    recusado = client.post(f"/expedicao/separacao/pedidos/{cenario.pedido_id}/iniciar")
+    assert recusado.status_code == 409
+    assert "Endereçamento inconsistente" in recusado.json()["detail"]
+
+
+def test_processo_traz_os_mesmos_enderecos_do_detalhe(ambiente):
+    """A tela de bipagem lê da mesma fonte que a de detalhe — nenhuma das duas
+    consulta `estoque_endereco_lote` por conta própria."""
+    client, _, cenario, _ = ambiente
+
+    processo = client.post(
+        f"/expedicao/separacao/pedidos/{cenario.pedido_id}/iniciar"
+    ).json()
+    por_item = {item["pedidoItemId"]: item for item in processo["itens"]}
+
+    assert [e["descricao"] for e in por_item[cenario.item_a_id]["enderecos"]] == [
+        "01-02-03-04-05",
+        "07-14-08-03-01",
+    ]
+    assert [e["quantidade"] for e in por_item[cenario.item_a_id]["enderecos"]] == [1.0, 2.0]
+    assert [e["descricao"] for e in por_item[cenario.item_b_id]["enderecos"]] == ["07-14-08-03-02"]
+
+
+def test_endereco_a_menos_trava_o_pedido_inteiro(ambiente):
+    """Falta mercadoria endereçada num item → o PEDIDO todo trava.
+
+    Trava o pedido inteiro, e não só o item, porque separação é uma viagem só
+    pelo galpão: liberar os itens bons deixaria alguém tendo que voltar depois
+    para terminar o mesmo pedido.
+    """
+    client, sessao, cenario, _ = ambiente
+
+    # item A pede 3; deixamos 2 endereçados
+    vinculo = (
+        sessao.query(EstoqueEnderecoLote)
+        .join(EstoqueEndereco, EstoqueEndereco.id == EstoqueEnderecoLote.estoque_enderecos_id)
+        .filter(EstoqueEndereco.descricao == "01-02-03-04-05")
+        .one()
+    )
+    sessao.delete(vinculo)
+    sessao.commit()
+
+    detalhe = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+    por_item = {item["pedidoItemId"]: item for item in detalhe["itens"]}
+
+    assert detalhe["podeIniciar"] is False
+    assert "A-001" in detalhe["bloqueioEnderecamento"]
+    assert "os endereços somam 2 e o pedido precisa de 3" in por_item[cenario.item_a_id]["bloqueio"]
+    # o item B está certo e mesmo assim não dá para começar
+    assert por_item[cenario.item_b_id]["bloqueio"] is None
+    for tipo in ("separacao", "conferencia"):
+        recusado = client.post(f"/expedicao/{tipo}/pedidos/{cenario.pedido_id}/iniciar")
+        assert recusado.status_code == 409, tipo
+
+
+def test_endereco_a_mais_e_aceito(ambiente):
+    """A regra é `soma >= pedido`, não igualdade: o endereço guarda o estoque
+    inteiro do lote, não uma reserva do pedido."""
+    client, sessao, cenario, _ = ambiente
+
+    vinculo = (
+        sessao.query(EstoqueEnderecoLote)
+        .join(EstoqueEndereco, EstoqueEndereco.id == EstoqueEnderecoLote.estoque_enderecos_id)
+        .filter(EstoqueEndereco.descricao == "07-14-08-03-01")
+        .one()
+    )
+    vinculo.quantidade = 500
+    sessao.commit()
+
+    detalhe = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+
+    assert detalhe["podeIniciar"] is True
+    assert detalhe["bloqueioEnderecamento"] is None
+    assert client.post(f"/expedicao/separacao/pedidos/{cenario.pedido_id}/iniciar").status_code == 200
+
+
+def test_saldo_que_nao_fecha_a_embalagem_de_venda_trava(ambiente):
+    """Produto vendido em caixa de 2 não pode ter 3 unidades soltas num
+    endereço: o operador bipa a caixa, cada bipe vale 2, e ele nunca fecharia
+    aquele endereço."""
+    client, sessao, cenario, _ = ambiente
+    produto_b = sessao.query(Produto).filter(Produto.codigo == "B-002").one()
+    produto_b.quantidade_multipla_venda = 2
+
+    vinculo = (
+        sessao.query(EstoqueEnderecoLote)
+        .join(EstoqueEndereco, EstoqueEndereco.id == EstoqueEnderecoLote.estoque_enderecos_id)
+        .filter(EstoqueEndereco.descricao == "07-14-08-03-02")
+        .one()
+    )
+    vinculo.quantidade = 3  # sobra suficiente, mas não fecha caixa
+    sessao.commit()
+
+    detalhe = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+    por_item = {item["pedidoItemId"]: item for item in detalhe["itens"]}
+
+    assert detalhe["podeIniciar"] is False
+    assert "não fecha em múltiplo de 2" in por_item[cenario.item_b_id]["bloqueio"]
+    recusado = client.post(f"/expedicao/separacao/pedidos/{cenario.pedido_id}/iniciar")
+    assert recusado.status_code == 409
+
+
+def test_listagem_marca_o_pedido_travado_sem_abrir_o_detalhe(ambiente):
+    """O coordenador precisa enxergar o pedido travado na fila — senão ele só
+    descobre quando o operador já está na frente da prateleira."""
+    client, sessao, cenario, _ = ambiente
+
+    sessao.query(EstoqueEnderecoLote).delete()
+    sessao.commit()
+
+    pagina = client.get("/expedicao/pedidos").json()
+    por_id = {p["pedidoId"]: p for p in pagina["items"]}
+
+    assert por_id[cenario.pedido_id]["podeIniciar"] is False
+    assert "Endereçamento insuficiente" in por_id[cenario.pedido_id]["bloqueioEnderecamento"]
+
+
+def test_finalizar_separacao_baixa_do_endereco(ambiente):
+    """A mercadoria sai do endereço quando a separação fecha, na ordem em que o
+    operador vê na tela (alfabética da descrição)."""
+    client, sessao, cenario, _ = ambiente
+
+    processo = client.post(f"/expedicao/separacao/pedidos/{cenario.pedido_id}/iniciar").json()
+    _processar_item_completo(
+        client, "separacao", processo["id"], cenario.item_a_id, CODIGO_BARRAS_A, 3
+    )
+    fim = _processar_item_completo(
+        client, "separacao", processo["id"], cenario.item_b_id, CODIGO_BARRAS_B, 2
+    )
+    assert fim.status_code == 200
+
+    saldos = {
+        endereco.descricao: float(vinculo.quantidade)
+        for vinculo, endereco in sessao.query(EstoqueEnderecoLote, EstoqueEndereco).join(
+            EstoqueEndereco, EstoqueEndereco.id == EstoqueEnderecoLote.estoque_enderecos_id
+        )
+    }
+
+    # item A pediu 3: consome 01-02-03-04-05 (tinha 1) e depois 07-14-08-03-01
+    assert saldos["01-02-03-04-05"] == 0.0
+    assert saldos["07-14-08-03-01"] == 0.0
+    # item B pediu 2, e o endereço dele tinha exatamente 2
+    assert saldos["07-14-08-03-02"] == 0.0
+
+
+def test_conferencia_nao_baixa_de_novo(ambiente):
+    """Baixar nas duas etapas descontaria o mesmo produto duas vezes — a
+    conferência mexe no que já está na caixa."""
+    client, sessao, cenario, _ = ambiente
+
+    vinculo = (
+        sessao.query(EstoqueEnderecoLote)
+        .join(EstoqueEndereco, EstoqueEndereco.id == EstoqueEnderecoLote.estoque_enderecos_id)
+        .filter(EstoqueEndereco.descricao == "07-14-08-03-01")
+        .one()
+    )
+    vinculo.quantidade = 100
+    sessao.commit()
+
+    separacao = client.post(f"/expedicao/separacao/pedidos/{cenario.pedido_id}/iniciar").json()
+    _processar_item_completo(
+        client, "separacao", separacao["id"], cenario.item_a_id, CODIGO_BARRAS_A, 3
+    )
+    _processar_item_completo(
+        client, "separacao", separacao["id"], cenario.item_b_id, CODIGO_BARRAS_B, 2
+    )
+    sessao.expire_all()
+    depois_da_separacao = float(
+        sessao.query(EstoqueEnderecoLote).filter(EstoqueEnderecoLote.id == vinculo.id).one().quantidade
+    )
+
+    conferencia = client.post(f"/expedicao/conferencia/pedidos/{cenario.pedido_id}/iniciar").json()
+    _processar_item_completo(
+        client, "conferencia", conferencia["id"], cenario.item_a_id, CODIGO_BARRAS_A, 3
+    )
+    _processar_item_completo(
+        client, "conferencia", conferencia["id"], cenario.item_b_id, CODIGO_BARRAS_B, 2
+    )
+    sessao.expire_all()
+    depois_da_conferencia = float(
+        sessao.query(EstoqueEnderecoLote).filter(EstoqueEnderecoLote.id == vinculo.id).one().quantidade
+    )
+
+    assert depois_da_separacao == depois_da_conferencia
 
 
 def test_conferencia_exige_separacao_finalizada(ambiente):
@@ -1187,8 +1519,41 @@ def test_listagem_expoe_os_tempos_das_duas_etapas(ambiente):
 # ---------------------------------------------------------------------------
 
 
+def _enderecar(sessao, empresa, produto, lote: str, quantidade, descricao: str):
+    """Cria lote + endereço + vínculo, que é o mínimo para um pedido daquele
+    lote passar na consistência da expedição.
+
+    Existe porque o endereçamento virou pré-requisito para iniciar: sem ele,
+    qualquer pedido montado num teste toma 409 antes de chegar no que o teste
+    queria exercitar.
+    """
+    estoque_lote = EstoqueLote(
+        produto_id=produto.id, lote=lote, quantidade=quantidade, empresa_id=empresa.id
+    )
+    endereco = EstoqueEndereco(descricao=descricao, empresa_id=empresa.id)
+    sessao.add_all([estoque_lote, endereco])
+    sessao.commit()
+    sessao.add(
+        EstoqueEnderecoLote(
+            estoque_enderecos_id=endereco.id,
+            estoque_lotes_id=estoque_lote.id,
+            empresa_id=empresa.id,
+            quantidade=quantidade,
+        )
+    )
+    sessao.commit()
+    return estoque_lote
+
+
 def _pedido_extra(sessao, cliente, empresa, status, produto, numero: str):
-    """Um pedido de uma linha, para montar situações variadas na fila."""
+    """Um pedido de uma linha, para montar situações variadas na fila.
+
+    Cada um ganha lote e endereço PRÓPRIOS, derivados do número: os pedidos
+    dividem o mesmo produto, e um lote compartilhado com 1 unidade só deixaria
+    o primeiro pedido passar na consistência.
+    """
+    lote = f"LOTE-{numero}"
+    _enderecar(sessao, empresa, produto, lote, 1, f"END-{numero}")
     pedido = Pedido(
         numero=numero,
         data_pedido=date(2026, 8, 17),
@@ -1204,6 +1569,7 @@ def _pedido_extra(sessao, cliente, empresa, status, produto, numero: str):
                 produto_descricao="Nutrison EN 1000ml",
                 quantidade=1,
                 preco_unitario=10,
+                lote=lote,
             )
         ],
     )
@@ -1453,6 +1819,69 @@ class TestFiltroPorSituacao:
 
         assert vistos == _todos_os_ids(client)
 
+    def test_contagens_cobrem_o_periodo_e_ignoram_os_filtros(self, galpao):
+        """Os contadores são um painel do período, não do que está filtrado.
+
+        É o que faz eles servirem para navegar: o coordenador vê "3 não
+        iniciados" e clica na aba. Se o número já viesse recortado pela busca em
+        curso, mostraria zero em tudo que não fosse a aba ativa — e não ajudaria
+        a achar nada.
+        """
+        client, _, cenario, _ = galpao
+
+        completa = client.get("/expedicao/pedidos").json()
+        contagens = completa["contagensPorSituacao"]
+
+        assert set(contagens) == {
+            "todos",
+            "nao_iniciados",
+            "em_separacao",
+            "aguardando_conferencia",
+            "em_conferencia",
+            "concluidos",
+            "divergentes",
+        }
+        assert contagens["todos"] == completa["total"]
+
+        # nenhum filtro da tela mexe nos contadores...
+        for parametros in (
+            {"situacao": "em_separacao"},
+            {"q": "PED-10005"},
+            {"empresaId": cenario.filial_id},
+            {"statusPedido": "PED"},
+        ):
+            filtrada = client.get("/expedicao/pedidos", params=parametros).json()
+            assert filtrada["contagensPorSituacao"] == contagens, parametros
+
+        # ...mas o período recorta, porque é dele que os contadores falam
+        vazio = client.get(
+            "/expedicao/pedidos", params={"dataInicio": "2020-01-01", "dataFim": "2020-01-31"}
+        ).json()
+        assert vazio["contagensPorSituacao"]["todos"] == 0
+
+    def test_contagem_bate_com_a_lista_que_a_aba_abre(self, galpao):
+        """O número da aba tem que ser o total que clicar nela devolve — senão é
+        decoração. Vale para as sete situações de uma vez."""
+        client, _, _, _ = galpao
+
+        contagens = client.get("/expedicao/pedidos").json()["contagensPorSituacao"]
+
+        for situacao, esperado in contagens.items():
+            pagina = client.get("/expedicao/pedidos", params={"situacao": situacao}).json()
+            assert pagina["total"] == esperado, situacao
+
+    def test_contagens_respeitam_a_visibilidade_por_atribuicao(self, galpao):
+        """Visibilidade não é filtro, é regra de acesso: quem não tem
+        `expedicao.atribuir` não pode descobrir pelo contador o que a lista
+        esconde dele."""
+        client, _, cenario, logado = galpao
+
+        logado["id"] = cenario.outro_id  # executa, não atribui
+        contagens = client.get("/expedicao/pedidos").json()["contagensPorSituacao"]
+
+        assert contagens["todos"] == 0
+        assert all(quantidade == 0 for quantidade in contagens.values())
+
     def test_situacao_desconhecida_e_recusada(self, galpao):
         client, _, _, _ = galpao
 
@@ -1660,3 +2089,571 @@ class TestDesempatePeloDigitoVerificador:
 
         assert recusada.status_code == 422
         assert "outro produto" in recusada.json()["detail"]
+
+
+# ===========================================================================
+# Execução delegada — o gerente executa a etapa no nome do operador atribuído
+#
+# O cenário real: o galpão não tem coletor para todo mundo. O gerente designa
+# alguém, essa pessoa separa no papel e avisa quando termina; o gerente
+# registra o início e o fim. O que precisa sobrar gravado são DUAS pessoas —
+# quem fez o trabalho e quem operou o sistema.
+# ===========================================================================
+
+
+def _iniciar_delegado(client, tipo, pedido_id):
+    return client.post(f"/expedicao/{tipo}/pedidos/{pedido_id}/iniciar-delegado")
+
+
+def _finalizar_delegado(client, tipo, pedido_id):
+    return client.post(f"/expedicao/{tipo}/pedidos/{pedido_id}/finalizar-delegado")
+
+
+class TestExecucaoDelegada:
+    def test_sem_atribuicao_credita_quem_clicou(self, ambiente):
+        """Pedido sem responsável não é de ninguém — é de quem resolveu pegá-lo.
+
+        Antes isto era um 409 pedindo para atribuir alguém primeiro, e o gerente
+        acabava atribuindo a si mesmo só para liberar o botão. O resultado
+        gravado é o mesmo, então a exigência era só um passo a mais.
+        """
+        client, sessao, cenario, _logado = ambiente
+
+        resposta = _iniciar_delegado(client, "separacao", cenario.pedido_id)
+
+        assert resposta.status_code == 200, resposta.text
+        processo = sessao.query(Separacao).filter(Separacao.pedido_id == cenario.pedido_id).one()
+        # o trabalho é de quem clicou...
+        assert processo.usuario_inicio_id == cenario.separador_id
+        # ...e a coluna de gestor fica NULA, porque não houve "em nome de"
+        assert processo.usuario_gestor_inicio_id is None
+
+    def test_sem_atribuicao_finaliza_sem_marcar_gestor(self, ambiente):
+        """Fechar o que ele mesmo abriu não é execução delegada — as colunas de
+        gestor continuam nulas nas duas pontas."""
+        client, sessao, cenario, _logado = ambiente
+        assert _iniciar_delegado(client, "separacao", cenario.pedido_id).status_code == 200
+
+        resposta = _finalizar_delegado(client, "separacao", cenario.pedido_id)
+
+        assert resposta.status_code == 200, resposta.text
+        sessao.expire_all()
+        processo = sessao.query(Separacao).filter(Separacao.pedido_id == cenario.pedido_id).one()
+        assert processo.status == "finalizada"
+        assert processo.usuario_fim_id == cenario.separador_id
+        assert processo.usuario_gestor_fim_id is None
+
+    def test_exige_permissao_de_delegar(self, ambiente):
+        """`outro` executa e nada mais — não distribui nem delega."""
+        client, _sessao, cenario, logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+
+        logado["id"] = cenario.outro_id
+        resposta = _iniciar_delegado(client, "separacao", cenario.pedido_id)
+
+        assert resposta.status_code == 403
+        assert "expedicao.delegar" in resposta.json()["detail"]
+
+    def test_credita_o_operador_e_registra_o_gestor(self, ambiente):
+        client, _sessao, cenario, _logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+
+        resposta = _iniciar_delegado(client, "separacao", cenario.pedido_id)
+
+        assert resposta.status_code == 200, resposta.text
+        processo = resposta.json()
+        # O trabalho é do operador atribuído...
+        assert processo["usuarioInicioId"] == cenario.outro_id
+        assert processo["usuarioInicioNome"] == "Operador Dois"
+        # ...e quem clicou foi o coordenador.
+        assert processo["usuarioGestorInicioNome"] == "Separador Um"
+        assert processo["status"] == "em_andamento"
+
+    def test_inicia_todos_os_itens_de_uma_vez(self, ambiente):
+        """A trava de "um item em andamento por vez" mede tempo por item na
+        bipagem. Aqui não há bipagem — obrigar um clique por linha custaria
+        cliques sem medir nada."""
+        client, _sessao, cenario, _logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+
+        processo = _iniciar_delegado(client, "separacao", cenario.pedido_id).json()
+
+        assert len(processo["itens"]) == 2
+        assert {item["situacao"] for item in processo["itens"]} == {"em_andamento"}
+
+    def test_finalizar_completa_todos_os_itens_sem_divergencia(self, ambiente):
+        """Fechar com a quantidade que estiver gravada marcaria tudo como
+        divergente (ninguém bipou), e o relatório de falta passaria a apontar
+        falta que não houve."""
+        client, _sessao, cenario, _logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+        _iniciar_delegado(client, "separacao", cenario.pedido_id)
+
+        resposta = _finalizar_delegado(client, "separacao", cenario.pedido_id)
+
+        assert resposta.status_code == 200, resposta.text
+        processo = resposta.json()
+        assert processo["status"] == "finalizada"
+        assert processo["usuarioFimId"] == cenario.outro_id
+        assert processo["usuarioGestorFimNome"] == "Separador Um"
+        for item in processo["itens"]:
+            assert item["situacao"] == "finalizado"
+            assert item["quantidadeProcessada"] == item["quantidadePedida"]
+            assert item["divergente"] is False
+
+    def test_nao_carimba_primeiro_bipe_mas_marca_inicio_e_fim(self, ambiente):
+        """Ninguém bipou, então `dataPrimeiroBipe` nulo é a informação correta.
+
+        O que NÃO pode faltar é `dataInicio`: é o instante que o gerente
+        registrou, e sem ele a listagem não teria de onde tirar hora de início
+        nem duração — mostrava um traço numa etapa que começou e terminou.
+        """
+        client, _sessao, cenario, _logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+        _iniciar_delegado(client, "separacao", cenario.pedido_id)
+        _finalizar_delegado(client, "separacao", cenario.pedido_id)
+
+        pedido = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+
+        assert pedido["separacao"]["dataPrimeiroBipe"] is None
+        assert pedido["separacao"]["dataInicio"] is not None
+        assert pedido["separacao"]["dataFim"] is not None
+
+    def test_instantes_saem_com_fuso_explicito(self, ambiente):
+        """Sem o `+00:00`, o navegador lê a string como hora LOCAL.
+
+        Um instante gravado às 23:28 UTC virava 23:28 de Brasília — três horas
+        no futuro. Processo fechado sobrevivia por sorte (os dois instantes
+        deslocavam junto), mas o EM ANDAMENTO comparava o instante deslocado com
+        o relógio real do navegador: a diferença dava negativa e a tela não
+        mostrava duração nenhuma.
+        """
+        client, _sessao, cenario, _logado = ambiente
+        _iniciar_delegado(client, "separacao", cenario.pedido_id)
+
+        pagina = client.get("/expedicao/pedidos").json()
+        linha = next(p for p in pagina["items"] if p["pedidoId"] == cenario.pedido_id)
+
+        inicio = linha["separacao"]["dataInicio"]
+        assert inicio.endswith("+00:00"), inicio
+        # E o instante é passado, não futuro — é isso que a tela mede.
+        assert datetime.fromisoformat(inicio) <= datetime.now(timezone.utc)
+
+    def test_listagem_traz_o_inicio_da_etapa_delegada(self, ambiente):
+        """A listagem é a tela que mostra o relógio do galpão — é lá que a
+        ausência aparecia."""
+        client, _sessao, cenario, _logado = ambiente
+        _iniciar_delegado(client, "separacao", cenario.pedido_id)
+
+        pagina = client.get("/expedicao/pedidos").json()
+        linha = next(p for p in pagina["items"] if p["pedidoId"] == cenario.pedido_id)
+
+        assert linha["separacao"]["dataPrimeiroBipe"] is None
+        assert linha["separacao"]["dataInicio"] is not None
+
+    def test_listagem_marca_a_etapa_como_delegada(self, ambiente):
+        client, _sessao, cenario, _logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+        _iniciar_delegado(client, "separacao", cenario.pedido_id)
+
+        pagina = client.get("/expedicao/pedidos").json()
+        linha = next(p for p in pagina["items"] if p["pedidoId"] == cenario.pedido_id)
+
+        assert linha["separacao"]["delegado"] is True
+        assert linha["separacao"]["usuarioNome"] == "Operador Dois"
+        assert linha["separacao"]["usuarioGestorInicioNome"] == "Separador Um"
+        # A etapa que ninguém delegou continua limpa.
+        assert linha["conferencia"]["delegado"] is False
+
+    def test_etapa_executada_pelo_proprio_operador_nao_e_delegada(self, ambiente):
+        """O par de colunas só aparece quando ator e sujeito são pessoas
+        diferentes — o caso normal continua exatamente como era."""
+        client, _sessao, cenario, _logado = ambiente
+        _abrir(client, "separacao", cenario.pedido_id)
+
+        pedido = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+
+        assert pedido["separacao"]["delegado"] is False
+        assert pedido["separacao"]["usuarioGestorInicioNome"] is None
+
+    def test_recusa_etapa_ja_aberta(self, ambiente):
+        client, _sessao, cenario, _logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+        _iniciar_delegado(client, "separacao", cenario.pedido_id)
+
+        resposta = _iniciar_delegado(client, "separacao", cenario.pedido_id)
+
+        assert resposta.status_code == 409
+        assert "já foi iniciada" in resposta.json()["detail"]
+
+    def test_finalizar_sem_etapa_aberta_gera_404(self, ambiente):
+        client, _sessao, cenario, _logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+
+        resposta = _finalizar_delegado(client, "separacao", cenario.pedido_id)
+
+        assert resposta.status_code == 404
+
+    def test_pedido_fora_do_status_ped_nao_entra(self, ambiente):
+        client, _sessao, cenario, _logado = ambiente
+        assert (
+            _atribuir(client, cenario.pedido_orcamento_id, "separacao", cenario.outro_id).status_code
+            == 204
+        )
+
+        resposta = _iniciar_delegado(client, "separacao", cenario.pedido_orcamento_id)
+
+        assert resposta.status_code == 409
+        assert "não pode ir para a expedição" in resposta.json()["detail"]
+
+    def test_conferencia_delegada_exige_separacao_finalizada(self, ambiente):
+        """A mesma regra do fluxo normal — atribuir conferência antes da
+        separação fechar já é recusado, então nem chega a haver atribuição."""
+        client, _sessao, cenario, _logado = ambiente
+
+        resposta = _atribuir(client, cenario.pedido_id, "conferencia", cenario.outro_id)
+
+        assert resposta.status_code == 409
+        assert "precisa ser finalizada" in resposta.json()["detail"]
+
+    def test_ciclo_completo_delegado_das_duas_etapas(self, ambiente):
+        """O caminho que o gerente percorre de verdade: despacha a separação,
+        registra o fim, despacha a conferência, registra o fim."""
+        client, _sessao, cenario, _logado = ambiente
+
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+        assert _iniciar_delegado(client, "separacao", cenario.pedido_id).status_code == 200
+        assert _finalizar_delegado(client, "separacao", cenario.pedido_id).status_code == 200
+
+        # Só agora a conferência pode ser atribuída.
+        assert (
+            _atribuir(client, cenario.pedido_id, "conferencia", cenario.outro_id).status_code == 204
+        )
+        assert _iniciar_delegado(client, "conferencia", cenario.pedido_id).status_code == 200
+        conferencia = _finalizar_delegado(client, "conferencia", cenario.pedido_id).json()
+
+        assert conferencia["status"] == "finalizada"
+        pedido = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+        assert pedido["separacao"]["status"] == "finalizada"
+        assert pedido["conferencia"]["status"] == "finalizada"
+        assert pedido["proximaEtapa"] is None
+        assert pedido["expedicaoStatus"] == pedido_publico.STATUS_CONFERIDO
+
+    def test_operador_atribuido_continua_a_etapa_aberta_pelo_gerente(self, ambiente):
+        """`usuario_inicio_id` guarda o OPERADOR, então a trava "quem começou
+        termina" continua deixando ele trabalhar se aparecer um coletor."""
+        client, _sessao, cenario, logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+        processo_id = _iniciar_delegado(client, "separacao", cenario.pedido_id).json()["id"]
+
+        logado["id"] = cenario.outro_id
+        leitura = _bipar(client, "separacao", processo_id, cenario.item_a_id, CODIGO_BARRAS_A, 3)
+
+        assert leitura.status_code == 200, leitura.text
+        item = next(i for i in leitura.json()["itens"] if i["pedidoItemId"] == cenario.item_a_id)
+        assert item["quantidadeProcessada"] == 3
+
+    def test_gerente_nao_bipa_no_lugar_do_operador(self, ambiente):
+        """Delegar não vira um atalho para operar a etapa de outro: a trava de
+        "quem começou termina" continua valendo item a item."""
+        client, _sessao, cenario, _logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+        processo_id = _iniciar_delegado(client, "separacao", cenario.pedido_id).json()["id"]
+
+        leitura = _bipar(client, "separacao", processo_id, cenario.item_a_id, CODIGO_BARRAS_A)
+
+        assert leitura.status_code == 403
+        assert "outro usuário" in leitura.json()["detail"]
+
+    def test_finalizar_recusa_quando_o_responsavel_mudou(self, ambiente):
+        """Se o responsável trocou depois da abertura, quem o gerente está
+        creditando não é mais quem fez o trabalho. Recusar é mais honesto que
+        gravar errado."""
+        client, sessao, cenario, _logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+        _iniciar_delegado(client, "separacao", cenario.pedido_id)
+
+        # Pela API isso é barrado (processo em andamento), então o desvio é
+        # forçado no banco — é a última linha de defesa que está sendo testada.
+        atribuicao = (
+            sessao.query(ExpedicaoAtribuicao)
+            .filter(
+                ExpedicaoAtribuicao.pedido_id == cenario.pedido_id,
+                ExpedicaoAtribuicao.sync_deleted_at.is_(None),
+            )
+            .one()
+        )
+        atribuicao.usuario_id = cenario.sem_conferencia_id
+        sessao.commit()
+
+        resposta = _finalizar_delegado(client, "separacao", cenario.pedido_id)
+
+        assert resposta.status_code == 409
+        assert "aberta por outro operador" in resposta.json()["detail"]
+
+    def test_resetar_uma_etapa_delegada_funciona_normalmente(self, ambiente):
+        """A saída de emergência continua valendo: se o gerente registrou
+        errado, o reset (com senha) desfaz e a etapa nasce de novo."""
+        client, _sessao, cenario, _logado = ambiente
+        assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+        processo_id = _iniciar_delegado(client, "separacao", cenario.pedido_id).json()["id"]
+        _finalizar_delegado(client, "separacao", cenario.pedido_id)
+
+        reset = client.post(
+            f"/expedicao/separacao/{processo_id}/resetar",
+            json={"usuarioGerente": "gerente", "senha": SENHA_GERENTE},
+        )
+
+        assert reset.status_code == 204, reset.text
+        pedido = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+        assert pedido["separacao"]["status"] == "nao_iniciada"
+        assert pedido["separacao"]["delegado"] is False
+
+
+# ===========================================================================
+# Gravar o pedido não pode quebrar a expedição
+#
+# `atualizar` apagava fisicamente as linhas e inseria outras, então o id do
+# item mudava a cada PUT — e `expedicao_separacao_itens.pedido_item_id` aponta
+# para ele. Uma integração que só reenviasse a capa destruía o vínculo com a
+# separação em andamento. Estes testes travam a reconciliação que substituiu
+# aquilo.
+# ===========================================================================
+
+
+def _reenviar_pedido(sessao, pedido_id: str, *, remover_produto_id: str | None = None):
+    """Simula o PUT da integração reenviando o pedido como ele está.
+
+    Monta o payload a partir do que está gravado, que é o que a integração faz:
+    ela manda o pedido inteiro toda vez, não um diff.
+    """
+    pedido = sessao.query(Pedido).filter(Pedido.id == pedido_id).one()
+    itens = [
+        dict(
+            produto_id=item.produto_id,
+            produto_codigo=item.produto_codigo,
+            produto_descricao=item.produto_descricao,
+            preco_unitario=str(item.preco_unitario),
+            quantidade=item.quantidade,
+            lote=item.lote,
+        )
+        for item in pedido.itens
+        if item.sync_deleted_at is None and item.produto_id != remover_produto_id
+    ]
+    dados = PedidoAtualizarSchema(
+        data_pedido=pedido.data_pedido,
+        cliente_id=pedido.cliente_id,
+        cliente_nome_fantasia=pedido.cliente_nome_fantasia,
+        cliente_cnpj=pedido.cliente_cnpj,
+        empresa_id=pedido.empresa_id,
+        status_id=pedido.status_id,
+        itens=itens,
+        observacoes=pedido.observacoes,
+    )
+    return pedido_service.atualizar(sessao, pedido_id, dados)
+
+
+class TestGravarPedidoComExpedicaoEmAndamento:
+    def test_reenviar_o_pedido_preserva_os_ids_dos_itens(self, ambiente):
+        _client, sessao, cenario, _logado = ambiente
+        antes = {cenario.item_a_id, cenario.item_b_id}
+
+        atualizado = _reenviar_pedido(sessao, cenario.pedido_id)
+
+        vivos = {item.id for item in atualizado.itens if item.sync_deleted_at is None}
+        assert vivos == antes
+
+    def test_separacao_em_andamento_sobrevive_ao_put(self, ambiente):
+        """O caso que quebrava: o operador está no meio da separação e a
+        integração reenvia o pedido."""
+        client, sessao, cenario, _logado = ambiente
+        processo_id = _abrir(client, "separacao", cenario.pedido_id)
+        assert (
+            client.post(
+                f"/expedicao/separacao/{processo_id}/itens/{cenario.item_a_id}/iniciar"
+            ).status_code
+            == 200
+        )
+        assert _bipar(
+            client, "separacao", processo_id, cenario.item_a_id, CODIGO_BARRAS_A, 2
+        ).status_code == 200
+
+        _reenviar_pedido(sessao, cenario.pedido_id)
+
+        # A separação continua de pé, com a contagem intacta...
+        processo = client.get(f"/expedicao/separacao/{processo_id}").json()
+        assert len(processo["itens"]) == 2
+        item_a = next(i for i in processo["itens"] if i["pedidoItemId"] == cenario.item_a_id)
+        assert item_a["quantidadeProcessada"] == 2
+        # ...e o operador consegue continuar de onde parou.
+        assert _bipar(
+            client, "separacao", processo_id, cenario.item_a_id, CODIGO_BARRAS_A
+        ).status_code == 200
+
+    def test_item_removido_do_pedido_nao_trava_a_separacao(self, ambiente):
+        """Sem `_linhas_que_contam`, a linha órfã ficava viva e invisível: o
+        processo nunca fechava e o cabeçalho mostrava "1 de 1" sem finalizar."""
+        client, sessao, cenario, _logado = ambiente
+        pedido = sessao.query(Pedido).filter(Pedido.id == cenario.pedido_id).one()
+        produto_b_id = next(
+            item.produto_id for item in pedido.itens if item.id == cenario.item_b_id
+        )
+        processo_id = _abrir(client, "separacao", cenario.pedido_id)
+
+        _reenviar_pedido(sessao, cenario.pedido_id, remover_produto_id=produto_b_id)
+
+        # A linha removida some da tela...
+        processo = client.get(f"/expedicao/separacao/{processo_id}").json()
+        assert [i["pedidoItemId"] for i in processo["itens"]] == [cenario.item_a_id]
+
+        # ...e fechar o que restou fecha o processo inteiro.
+        fechamento = _processar_item_completo(
+            client, "separacao", processo_id, cenario.item_a_id, CODIGO_BARRAS_A, 3
+        )
+        assert fechamento.status_code == 200, fechamento.text
+        assert fechamento.json()["status"] == "finalizada"
+
+    def test_contagem_da_listagem_acompanha_o_item_removido(self, ambiente):
+        """O total vem do pedido e os finalizados vinham do processo — sem o
+        filtro, dava para aparecer "2 de 1"."""
+        client, sessao, cenario, _logado = ambiente
+        pedido = sessao.query(Pedido).filter(Pedido.id == cenario.pedido_id).one()
+        produto_b_id = next(
+            item.produto_id for item in pedido.itens if item.id == cenario.item_b_id
+        )
+        _abrir(client, "separacao", cenario.pedido_id)
+
+        _reenviar_pedido(sessao, cenario.pedido_id, remover_produto_id=produto_b_id)
+
+        detalhe = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+        assert detalhe["separacao"]["itensTotal"] == 1
+        assert detalhe["separacao"]["itensFinalizados"] == 0
+        assert len(detalhe["itens"]) == 1
+
+    def test_item_removido_e_recolocado_volta_com_o_mesmo_id(self, ambiente):
+        """Reviver, e não reinserir: preserva o id que a expedição referencia e
+        não bate no unique (pedido, produto, lote)."""
+        _client, sessao, cenario, _logado = ambiente
+        pedido = sessao.query(Pedido).filter(Pedido.id == cenario.pedido_id).one()
+        produto_b_id = next(
+            item.produto_id for item in pedido.itens if item.id == cenario.item_b_id
+        )
+
+        _reenviar_pedido(sessao, cenario.pedido_id, remover_produto_id=produto_b_id)
+        # o payload volta completo porque `_reenviar_pedido` monta a partir das
+        # linhas VIVAS — então recolocamos a linha à mão, como o ERP faria
+        removida = (
+            sessao.query(PedidoItem)
+            .filter(PedidoItem.id == cenario.item_b_id)
+            .one()
+        )
+        assert removida.sync_deleted_at is not None
+
+        dados = PedidoAtualizarSchema(
+            data_pedido=pedido.data_pedido,
+            cliente_id=pedido.cliente_id,
+            cliente_nome_fantasia=pedido.cliente_nome_fantasia,
+            cliente_cnpj=pedido.cliente_cnpj,
+            empresa_id=pedido.empresa_id,
+            status_id=pedido.status_id,
+            itens=[
+                dict(
+                    produto_id=item.produto_id,
+                    produto_codigo=item.produto_codigo,
+                    produto_descricao=item.produto_descricao,
+                    preco_unitario=str(item.preco_unitario),
+                    quantidade=item.quantidade,
+                            lote=item.lote,
+                )
+                for item in (
+                    sessao.query(PedidoItem)
+                    .filter(PedidoItem.pedido_id == cenario.pedido_id)
+                    .all()
+                )
+            ],
+            observacoes=pedido.observacoes,
+        )
+        atualizado = pedido_service.atualizar(sessao, cenario.pedido_id, dados)
+
+        revivida = next(i for i in atualizado.itens if i.id == cenario.item_b_id)
+        assert revivida.sync_deleted_at is None
+
+
+# ===========================================================================
+# Liberação de endereçamento inconsistente
+#
+# Endereçamento errado trava o pedido para todo mundo. `expedicao.enderecamento
+# .liberar` é a exceção de emergência: quem tem a chave atravessa o bloqueio
+# pelos botões da execução delegada, para destravar o faturamento. O caminho do
+# operador continua fechado, e o status do ERP continua barrando.
+# ===========================================================================
+
+
+def _conceder(sessao, usuario_id: str, chave: str) -> None:
+    sessao.add(UsuarioPermissao(usuario_id=usuario_id, chave=chave))
+    sessao.commit()
+
+
+class TestLiberarEnderecamento:
+    def test_delegado_sem_a_chave_e_recusado(self, ambiente):
+        """A barreira que faltava: `iniciar-delegado` não checava endereçamento,
+        e era o buraco por onde a regra sumia."""
+        client, sessao, cenario, _logado = ambiente
+        sessao.query(EstoqueEnderecoLote).delete()
+        sessao.commit()
+
+        resposta = _iniciar_delegado(client, "separacao", cenario.pedido_id)
+
+        assert resposta.status_code == 409
+        assert "Endereçamento inconsistente" in resposta.json()["detail"]
+
+    def test_com_a_chave_inicia_e_finaliza(self, ambiente):
+        """O ciclo inteiro da emergência: abre e FECHA. Liberar só o início
+        deixaria o pedido preso em andamento, porque a baixa do endereço
+        recusaria o saldo insuficiente — e nada teria sido destravado."""
+        client, sessao, cenario, _logado = ambiente
+        sessao.query(EstoqueEnderecoLote).delete()
+        _conceder(sessao, cenario.separador_id, "expedicao.enderecamento.liberar")
+
+        aberto = _iniciar_delegado(client, "separacao", cenario.pedido_id)
+        assert aberto.status_code == 200, aberto.text
+
+        fechado = _finalizar_delegado(client, "separacao", cenario.pedido_id)
+        assert fechado.status_code == 200, fechado.text
+        assert fechado.json()["status"] == "finalizada"
+
+    def test_a_chave_nao_atravessa_o_status_do_erp(self, ambiente):
+        """Endereçamento é problema do galpão e se resolve daqui. Status é do
+        ERP — nada que se faça nesta tela o corrige."""
+        client, sessao, cenario, _logado = ambiente
+        _conceder(sessao, cenario.separador_id, "expedicao.enderecamento.liberar")
+
+        resposta = _iniciar_delegado(client, "separacao", cenario.pedido_orcamento_id)
+
+        assert resposta.status_code == 409
+        assert "não pode ir para a expedição" in resposta.json()["detail"]
+
+    def test_a_chave_nao_libera_o_botao_do_operador(self, ambiente):
+        """A exceção é de quem responde pelo galpão, não de quem separa: o
+        caminho normal continua recusando, com a mesma frase de sempre."""
+        client, sessao, cenario, _logado = ambiente
+        sessao.query(EstoqueEnderecoLote).delete()
+        _conceder(sessao, cenario.separador_id, "expedicao.enderecamento.liberar")
+
+        resposta = client.post(f"/expedicao/separacao/pedidos/{cenario.pedido_id}/iniciar")
+
+        assert resposta.status_code == 409
+        assert "Endereçamento inconsistente" in resposta.json()["detail"]
+
+    def test_detalhe_separa_as_duas_barreiras(self, ambiente):
+        """Com um booleano só a tela não distinguiria "status errado" (nada a
+        fazer) de "endereçamento errado" (liberável)."""
+        client, sessao, cenario, _logado = ambiente
+        sessao.query(EstoqueEnderecoLote).delete()
+        sessao.commit()
+
+        detalhe = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+
+        assert detalhe["podeIniciar"] is False
+        assert detalhe["statusPermiteIniciar"] is True
+        assert "Endereçamento insuficiente" in detalhe["bloqueioEnderecamento"]

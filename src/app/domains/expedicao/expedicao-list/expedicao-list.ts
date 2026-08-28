@@ -18,6 +18,7 @@ import {
   SituacaoProcesso,
   TipoProcesso,
   duracaoEntre,
+  inicioDaEtapa,
   numeroExibicao,
   rotuloTipo,
 } from '../expedicao.model';
@@ -208,6 +209,12 @@ export class ExpedicaoList implements OnInit {
 
   pagina = signal(1);
   total = signal(0);
+  /** Quantos pedidos há em cada situação NO PERÍODO — vem pronto do servidor.
+   *
+   *  Já existiu uma contagem aqui, feita sobre a página carregada, e ela mentia:
+   *  com o filtro no servidor mostrava "Em separação (50)" numa fila de 900.
+   *  Esta vem de `contagensPorSituacao`, calculada em cima do período inteiro. */
+  contagens = signal<Record<FiltroSituacao, number> | null>(null);
   /** Ordenação atual. Vai para o SERVIDOR: ordenar a página carregada
    *  reordenaria 50 linhas de 1.200 e pareceria que funcionou. */
   sort = signal<ColunaOrdenavel>('sync_updated_at');
@@ -375,6 +382,22 @@ export class ExpedicaoList implements OnInit {
     this.carregar(1);
   }
 
+  /** O número da aba. Nulo antes da primeira resposta — aí o botão sai sem
+   *  contagem em vez de piscar um zero que não é verdade. */
+  contagem(situacao: FiltroSituacao): number | null {
+    return this.contagens()?.[situacao] ?? null;
+  }
+
+  /** As mesmas opções, com a contagem no rótulo — o `p-select` do coletor não
+   *  tem onde pendurar um badge, então o número entra no texto. */
+  opcoesComContagem = computed(() => {
+    const contagens = this.contagens();
+    return this.opcoes.map((opcao) => ({
+      chave: opcao.chave,
+      rotulo: contagens ? `${opcao.rotulo} (${contagens[opcao.chave]})` : opcao.rotulo,
+    }));
+  });
+
   onSituacaoChange(situacao: FiltroSituacao): void {
     this.situacao.set(situacao);
     this.carregar(1);
@@ -428,6 +451,7 @@ export class ExpedicaoList implements OnInit {
           // de atribuição errada.
           this.selecionados.set(new Set());
           this.total.set(resposta.total);
+          this.contagens.set(resposta.contagensPorSituacao);
           this.pagina.set(resposta.page);
           this.carregando.set(false);
         },
@@ -579,9 +603,15 @@ export class ExpedicaoList implements OnInit {
     return duracaoEntre(pedido.liberadoEm, pedido.conferencia.dataFim);
   }
 
-  /** Tempo de uma etapa: do primeiro bipe até o fim (ou até agora). */
+  /** Quando a etapa começou a contar: primeiro bipe, ou a abertura quando a
+   *  etapa foi delegada e ninguém bipou. Ver `inicioDaEtapa`. */
+  inicioEtapa(situacao: SituacaoProcesso): string | null {
+    return inicioDaEtapa(situacao);
+  }
+
+  /** Tempo de uma etapa: do início até o fim (ou até agora). */
   tempoEtapa(situacao: SituacaoProcesso): Duracao | null {
-    return duracaoEntre(situacao.dataPrimeiroBipe, situacao.dataFim);
+    return duracaoEntre(inicioDaEtapa(situacao), situacao.dataFim);
   }
 
   /**

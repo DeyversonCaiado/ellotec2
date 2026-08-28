@@ -1,0 +1,375 @@
+<div class="p-4 sm:p-6 max-w-[1200px] mx-auto">
+
+  @if (carregando()) {
+    <div class="p-12 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm gap-2">
+      <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+      </svg>
+      Carregando entrega...
+    </div>
+  } @else if (!nota()) {
+    <div class="p-12 text-center text-gray-400 dark:text-gray-500 text-sm">Entrega não encontrada.</div>
+  } @else {
+    @let n = nota()!;
+
+    <app-page-header
+      [titulo]="'Nota ' + n.numeroNota + (n.serie ? '/' + n.serie : '')"
+      [subtitulo]="(n.clienteNome || 'Cliente não informado') + ' · pedido ' + (n.pedido || '—')"
+    >
+      <div class="flex items-center gap-2">
+        <a routerLink="/entregas" class="inline-flex items-center gap-1.5 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800">
+          <app-icon name="arrow-left" class="size-4" />
+          Voltar
+        </a>
+        <ng-container *appPermissao="'entregas.interacao.registrar'">
+          <button
+            type="button"
+            (click)="abrirNova()"
+            class="inline-flex items-center gap-2 text-sm font-semibold bg-brand-600 text-white rounded-lg px-4 py-2.5 hover:bg-brand-700"
+          >
+            <app-icon name="plus" class="size-4" />
+            Nova interação
+          </button>
+        </ng-container>
+      </div>
+    </app-page-header>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Capa: o que dá contexto antes de olhar a linha do tempo            -->
+    <!-- ---------------------------------------------------------------- -->
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 mb-4">
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corStatus(n.statusAtual)">
+          {{ rotuloStatus(n.statusAtual) }}
+        </span>
+        <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corPrazo(n.statusPrazo)">
+          {{ rotuloPrazo(n.statusPrazo) }}
+        </span>
+        @if (n.termolabil) {
+          <span class="inline-flex items-center text-xs font-bold rounded-full px-2.5 py-1 text-cyan-700 bg-cyan-50">Termolábil</span>
+        }
+      </div>
+
+      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div>
+          <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Data da nota</p>
+          <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.dataNota ? (n.dataNota | date:'dd/MM/yyyy') : '—' }}</p>
+        </div>
+        <div>
+          <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Destino</p>
+          <p class="text-sm text-gray-800 dark:text-gray-100">
+            {{ n.clienteCidade || '—' }}{{ n.clienteUf ? ' / ' + n.clienteUf : '' }}
+          </p>
+        </div>
+        <div>
+          <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Vendedor</p>
+          <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.vendedorNome || '—' }}</p>
+        </div>
+        <div>
+          <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Valor total</p>
+          <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ n.valorTotal | currency:'BRL' }}</p>
+        </div>
+
+        <div>
+          <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Mapa de carga</p>
+          <p class="text-sm text-gray-800 dark:text-gray-100 font-mono">{{ n.numeroMapa || '—' }}</p>
+        </div>
+        <div>
+          <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Despacho</p>
+          <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.dataMapa ? (n.dataMapa | date:'dd/MM/yyyy HH:mm') : '—' }}</p>
+        </div>
+        <div>
+          <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Transportadora</p>
+          <p class="text-sm text-gray-800 dark:text-gray-100">{{ n.transportadoraNome || '—' }}</p>
+        </div>
+        <div>
+          <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Entrega prevista</p>
+          <p class="text-sm text-gray-800 dark:text-gray-100">
+            {{ n.dataPrevistaEntrega ? (n.dataPrevistaEntrega | date:'dd/MM/yyyy') : '—' }}
+            @if (n.prazoDias !== null) {
+              <span class="text-xs text-gray-400">(D+{{ n.prazoDias }})</span>
+            }
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Itens: fechado por padrão — quem abre a tela quer a timeline       -->
+    <!-- ---------------------------------------------------------------- -->
+    <div class="mb-4">
+      <p-accordion>
+        <p-accordion-panel value="itens">
+          <p-accordion-header>
+            <span class="text-sm font-semibold">
+              Itens da nota
+              <span class="ms-1.5 text-xs font-bold text-brand-700 dark:text-brand-300">({{ n.itens.length }})</span>
+            </span>
+          </p-accordion-header>
+          <p-accordion-content>
+            @if (n.itens.length === 0) {
+              <!-- Notas migradas do sistema antigo não têm itens: o legado só
+                   guardava a interação. Eles aparecem quando a integração
+                   mandar a nota completa. -->
+              <p class="text-sm text-gray-400 dark:text-gray-500 py-2">
+                Os itens desta nota ainda não foram recebidos da integração.
+              </p>
+            } @else {
+              <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-100 dark:divide-gray-800">
+                  <thead>
+                    <tr>
+                      <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">#</th>
+                      <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Produto</th>
+                      <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Lote / Validade</th>
+                      <th class="px-3 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Qtd.</th>
+                      <th class="px-3 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Devolvida</th>
+                      <th class="px-3 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                    @for (item of n.itens; track item.id) {
+                      <tr>
+                        <td class="px-3 py-2.5 text-sm text-gray-500 dark:text-gray-400">{{ item.numeroItem }}</td>
+                        <td class="px-3 py-2.5">
+                          <p class="text-sm text-gray-700 dark:text-gray-200">{{ item.produtoDescricao }}</p>
+                          <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">
+                            {{ item.produtoCodigo }}@if (item.marcaNome) { · {{ item.marcaNome }} }
+                          </p>
+                        </td>
+                        <td class="px-3 py-2.5 text-xs text-gray-500 dark:text-gray-400">
+                          {{ item.lote || '—' }}
+                          @if (item.validade) { <br />{{ item.validade | date:'dd/MM/yyyy' }} }
+                        </td>
+                        <td class="px-3 py-2.5 text-sm text-gray-600 dark:text-gray-300 text-end">{{ item.quantidade | number:'1.0-4' }}</td>
+                        <td class="px-3 py-2.5 text-sm text-end" [class]="item.quantidadeDevolvida ? 'text-orange-600 font-semibold' : 'text-gray-400'">
+                          {{ item.quantidadeDevolvida | number:'1.0-4' }}
+                        </td>
+                        <td class="px-3 py-2.5 text-sm text-gray-800 dark:text-gray-100 text-end font-semibold">{{ item.valorTotal | currency:'BRL' }}</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            }
+          </p-accordion-content>
+        </p-accordion-panel>
+      </p-accordion>
+    </div>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Notas de devolução: o que voltou desta entrega                     -->
+    <!--                                                                    -->
+    <!-- Só aparece quando existe alguma. Uma seção vazia em toda nota diria  -->
+    <!-- "sem devolução" o tempo todo, e a informação que importa é o        -->
+    <!-- contrário: quando HOUVE devolução, ela não pode passar batida.      -->
+    <!--                                                                    -->
+    <!-- O vínculo é pela CHAVE DE ACESSO — as notas cuja chave referenciada  -->
+    <!-- aponta para a chave desta. Quem monta a lista é o backend.          -->
+    <!-- ---------------------------------------------------------------- -->
+    @if (n.notasDevolucao.length) {
+      <div class="mb-4 border border-orange-200 dark:border-orange-900 rounded-xl overflow-hidden">
+        <div class="px-4 py-3 bg-orange-50 dark:bg-orange-950/40 border-b border-orange-200 dark:border-orange-900">
+          <p class="text-sm font-semibold text-orange-800 dark:text-orange-200">
+            Notas de devolução
+            <span class="ms-1 text-xs font-bold">({{ n.notasDevolucao.length }})</span>
+          </p>
+          <p class="text-xs text-orange-700/80 dark:text-orange-300/80 mt-0.5">
+            Notas que referenciam a chave de acesso desta.
+          </p>
+        </div>
+        <div class="overflow-x-auto bg-white dark:bg-gray-900">
+          <table class="min-w-full divide-y divide-gray-100 dark:divide-gray-800">
+            <thead>
+              <tr>
+                <th class="px-4 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Nota</th>
+                <th class="px-4 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Data</th>
+                <th class="px-4 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Tipo</th>
+                <th class="px-4 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Sit</th>
+                <th class="px-4 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Status</th>
+                <th class="px-4 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Valor</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+              @for (devolucao of n.notasDevolucao; track devolucao.id) {
+                <!-- Clicável: a nota de devolução é uma nota como outra
+                     qualquer nesta tela, com itens e linha do tempo próprios. -->
+                <tr
+                  [routerLink]="['/entregas', devolucao.id]"
+                  class="hover:bg-gray-50/60 dark:hover:bg-gray-800/40 cursor-pointer"
+                >
+                  <td class="px-4 py-2.5">
+                    <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 font-mono">
+                      {{ devolucao.numeroNota }}@if (devolucao.serie) {<span class="text-gray-400">/{{ devolucao.serie }}</span>}
+                    </p>
+                  </td>
+                  <td class="px-4 py-2.5 text-sm text-gray-600 dark:text-gray-300">
+                    {{ devolucao.dataNota ? (devolucao.dataNota | date:'dd/MM/yyyy') : '—' }}
+                  </td>
+                  <td class="px-4 py-2.5 text-sm text-gray-600 dark:text-gray-300">
+                    {{ rotuloTipoNota(devolucao.tipoNota) }}
+                  </td>
+                  <td class="px-4 py-2.5 text-sm font-mono text-gray-500 dark:text-gray-400">
+                    {{ devolucao.situacao || '—' }}
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corStatus(devolucao.statusAtual)">
+                      {{ rotuloStatus(devolucao.statusAtual) }}
+                    </span>
+                  </td>
+                  <td class="px-4 py-2.5 text-sm text-gray-800 dark:text-gray-100 text-end font-semibold">
+                    {{ devolucao.valorTotal | currency:'BRL' }}
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    }
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Linha do tempo                                                     -->
+    <!-- ---------------------------------------------------------------- -->
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+      <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-4">
+        Linha do tempo
+        <span class="ms-1 text-xs font-normal text-gray-400">
+          {{ n.interacoes.length }} {{ n.interacoes.length === 1 ? 'interação' : 'interações' }}
+        </span>
+      </p>
+
+      @if (n.interacoes.length === 0) {
+        <p class="text-sm text-gray-400 dark:text-gray-500 py-6 text-center">
+          Nenhuma interação registrada ainda.
+        </p>
+      } @else {
+        <p-timeline [value]="n.interacoes" align="left" styleClass="customized-timeline">
+          <!-- No lugar da data absoluta, o tempo relativo: quem acompanha
+               entrega quer saber se o último evento é de agora ou de três dias
+               atrás, e a data obriga a fazer a conta de cabeça. -->
+          <!-- Duas linhas: o tempo relativo responde "isso é recente?" de
+               relance, e a data absoluta embaixo é o que se usa para conferir
+               com o cliente ou com a transportadora ("a nota saiu dia 20 às
+               18h"). Uma não substitui a outra. -->
+          <ng-template #opposite let-interacao>
+            <div class="flex flex-col items-end text-end pe-1">
+              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                {{ interacao.dataInteracao | tempoRelativo }}
+              </span>
+              <span class="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">
+                {{ interacao.dataInteracao | date:'dd/MM/yyyy HH:mm' }}
+              </span>
+            </div>
+          </ng-template>
+
+          <ng-template #marker let-interacao>
+            <span
+              class="flex size-3 rounded-full ring-4 ring-white dark:ring-gray-900"
+              [class]="marcadorStatus(interacao.status)"
+            ></span>
+          </ng-template>
+
+          <ng-template #content let-interacao>
+            <div class="pb-6 ps-1">
+              <div class="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-800/40 p-3">
+                <div class="flex items-start gap-2">
+                  <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corStatus(interacao.status)">
+                    {{ rotuloStatus(interacao.status) }}
+                  </span>
+                  <div class="ms-auto flex items-center gap-1">
+                    <ng-container *appPermissao="'entregas.interacao.registrar'">
+                      <button (click)="abrirEdicao(interacao)" class="p-1.5 rounded-lg text-gray-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/30" title="Corrigir">
+                        <app-icon name="edit" class="size-3.5" />
+                      </button>
+                    </ng-container>
+                    <ng-container *appPermissao="'entregas.interacao.apagar'">
+                      <button (click)="apagar(interacao)" class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20" title="Remover">
+                        <app-icon name="trash" class="size-3.5" />
+                      </button>
+                    </ng-container>
+                  </div>
+                </div>
+
+                @if (interacao.observacao) {
+                  <p class="text-sm text-gray-700 dark:text-gray-200 mt-2 whitespace-pre-line">{{ interacao.observacao }}</p>
+                }
+
+                <!-- Corrigir texto é legítimo; corrigir em silêncio não é. -->
+                @if (interacao.editadoEm) {
+                  <p class="text-xs text-gray-400 dark:text-gray-500 mt-1.5 italic">
+                    editado {{ interacao.editadoEm | tempoRelativo }}
+                    @if (interacao.editadoPorNome) { por {{ interacao.editadoPorNome }} }
+                  </p>
+                }
+              </div>
+
+              <!-- O autor fica ABAIXO do card, fora da moldura: é assinatura
+                   do evento, não conteúdo dele. -->
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1.5 ms-1">
+                {{ interacao.usuarioNome }}
+              </p>
+            </div>
+          </ng-template>
+        </p-timeline>
+      }
+    </div>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Dialog: mesmo formulário para nova interação e para correção       -->
+    <!-- ---------------------------------------------------------------- -->
+    <p-dialog
+      [(visible)]="dialogAberto"
+      [modal]="true"
+      [draggable]="false"
+      [style]="{ width: '30rem' }"
+      [header]="editandoId() ? 'Corrigir interação' : 'Nova interação'"
+    >
+      <div class="flex flex-col gap-4 pt-2">
+        <label class="block">
+          <span class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1.5">Situação</span>
+          <p-select
+            styleClass="w-full"
+            [options]="opcoesStatus"
+            optionLabel="rotulo"
+            optionValue="valor"
+            [ngModel]="formStatus()"
+            (ngModelChange)="formStatus.set($event)"
+          />
+        </label>
+
+        <label class="block">
+          <span class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1.5">Observação</span>
+          <textarea
+            rows="4"
+            maxlength="1000"
+            [ngModel]="formObservacao()"
+            (ngModelChange)="formObservacao.set($event)"
+            placeholder="Ex: Recebido por Luan na portaria"
+            class="py-2 px-3 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 focus:border-brand-500 focus:ring-brand-500"
+          ></textarea>
+          <span class="text-xs text-gray-400">{{ formObservacao().length }}/1000</span>
+        </label>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-4">
+        <button
+          type="button"
+          (click)="dialogAberto.set(false)"
+          class="text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800"
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          (click)="salvar()"
+          [disabled]="salvando()"
+          class="text-sm font-semibold bg-brand-600 text-white rounded-lg px-4 py-2.5 hover:bg-brand-700 disabled:opacity-40"
+        >
+          {{ salvando() ? 'Salvando...' : 'Salvar' }}
+        </button>
+      </div>
+    </p-dialog>
+  }
+</div>

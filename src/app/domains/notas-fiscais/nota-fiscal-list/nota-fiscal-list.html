@@ -1,0 +1,170 @@
+<div class="p-4 sm:p-6 max-w-[1400px] mx-auto">
+
+  <app-page-header titulo="Notas Fiscais" subtitulo="Documentos fiscais de entrada e saída" />
+
+  <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+
+    <!-- Entrada e saída são o mesmo documento visto dos dois lados: uma aba,
+         não dois itens de menu. -->
+    <div class="px-4 pt-4 flex flex-wrap items-center gap-1 border-b border-gray-100 dark:border-gray-800">
+      @for (aba of abas; track aba.valor) {
+        <button
+          type="button"
+          (click)="selecionarAba(aba.valor)"
+          class="text-sm font-semibold px-4 py-2.5 -mb-px border-b-2 transition-colors"
+          [class]="filtros().tipoOperacao === aba.valor
+            ? 'border-brand-600 text-brand-600 dark:text-brand-400'
+            : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
+        >
+          {{ aba.rotulo }}
+        </button>
+      }
+    </div>
+
+    <div class="p-4 border-b border-gray-100 dark:border-gray-800 flex flex-wrap items-end gap-3">
+      <div class="relative w-full sm:max-w-sm">
+        <div class="absolute inset-y-0 start-0 flex items-center pointer-events-none ps-3">
+          <app-icon name="search" class="size-4 text-gray-400 dark:text-gray-500" />
+        </div>
+        <input
+          type="text"
+          [ngModel]="filtros().q"
+          (ngModelChange)="onBuscaChange($event)"
+          placeholder="Buscar por número, chave, CNPJ ou razão social..."
+          class="py-2 ps-9 pe-3 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500"
+        />
+      </div>
+
+      <!-- Período de EMISSÃO — a data de negócio do documento, não a data em
+           que a integração gravou a linha. -->
+      <div class="flex items-end gap-2">
+        <label class="block">
+          <span class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">Emissão de</span>
+          <input
+            type="date"
+            [ngModel]="filtros().dataInicio"
+            (ngModelChange)="onPeriodoChange('dataInicio', $event)"
+            class="py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500"
+          />
+        </label>
+        <label class="block">
+          <span class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">até</span>
+          <input
+            type="date"
+            [ngModel]="filtros().dataFim"
+            (ngModelChange)="onPeriodoChange('dataFim', $event)"
+            class="py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500"
+          />
+        </label>
+      </div>
+
+      @if (temFiltroAtivo()) {
+        <button
+          type="button"
+          (click)="limparFiltros()"
+          class="inline-flex items-center gap-1.5 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800"
+        >
+          <app-icon name="rotate" class="size-4" />
+          Limpar
+        </button>
+      }
+    </div>
+
+    @if (carregando()) {
+      <div class="p-12 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm gap-2">
+        <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+        </svg>
+        Carregando notas fiscais...
+      </div>
+    } @else if (notas().length === 0) {
+      <div class="p-12 text-center text-gray-400 dark:text-gray-500 text-sm">Nenhuma nota fiscal encontrada.</div>
+    } @else {
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-100 dark:divide-gray-800">
+          <thead class="bg-gray-50 dark:bg-gray-800/60">
+            <tr>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Número</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Tipo</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Emissão</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Fornecedor / Cliente</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Natureza</th>
+              <th class="px-5 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Total</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Status</th>
+              <th class="px-5 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Ações</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+            @for (nota of notas(); track nota.id) {
+              <tr class="hover:bg-gray-50/60 dark:hover:bg-gray-800/40">
+                <td class="px-5 py-3.5">
+                  <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 font-mono">{{ nota.numero }}/{{ nota.serie }}</p>
+                  <p class="text-xs text-gray-400 dark:text-gray-500">Modelo {{ nota.modelo }}</p>
+                </td>
+                <td class="px-5 py-3.5">
+                  <span
+                    class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1"
+                    [class]="nota.tipoOperacao === 'entrada' ? 'text-sky-700 bg-sky-50' : 'text-violet-700 bg-violet-50'"
+                  >
+                    {{ nota.tipoOperacao === 'entrada' ? 'Entrada' : 'Saída' }}
+                  </span>
+                </td>
+                <td class="px-5 py-3.5 text-sm text-gray-600 dark:text-gray-300">{{ nota.dataEmissao | date:'dd/MM/yyyy' }}</td>
+                <td class="px-5 py-3.5">
+                  <p class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ contraparte(nota).nome }}</p>
+                  <p class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ contraparte(nota).documento }}</p>
+                </td>
+                <td class="px-5 py-3.5 text-sm text-gray-500 dark:text-gray-400">{{ nota.naturezaOperacao || '—' }}</td>
+                <td class="px-5 py-3.5 text-sm text-gray-800 dark:text-gray-100 text-end font-semibold">{{ nota.valorTotal | currency:'BRL' }}</td>
+                <td class="px-5 py-3.5">
+                  <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corDoStatus(nota.status)">
+                    {{ rotuloDoStatus(nota.status) }}
+                  </span>
+                </td>
+                <td class="px-5 py-3.5">
+                  <div class="flex items-center justify-end gap-1">
+                    <a [routerLink]="['/notas-fiscais', nota.id]" class="p-2 rounded-lg text-gray-400 dark:text-gray-500 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-brand-50 dark:hover:bg-brand-900/30" title="Ver detalhe">
+                      <app-icon name="eye" class="size-4" />
+                    </a>
+                    <ng-container *appPermissao="'notas_fiscais.apagar'">
+                      <button (click)="apagar(nota)" class="p-2 rounded-lg text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20" title="Apagar">
+                        <app-icon name="trash" class="size-4" />
+                      </button>
+                    </ng-container>
+                  </div>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <div class="p-4 border-t border-gray-100 dark:border-gray-800 flex flex-col sm:flex-row sm:items-center gap-3">
+        <p class="text-xs text-gray-500 dark:text-gray-400">
+          Página {{ pagina() }} de {{ totalPaginas() }} · {{ total() }} {{ total() === 1 ? 'nota' : 'notas' }}
+        </p>
+        <div class="sm:ms-auto flex items-center gap-2">
+          <button
+            type="button"
+            (click)="irParaPagina(pagina() - 1)"
+            [disabled]="pagina() <= 1 || carregando()"
+            class="inline-flex items-center gap-1.5 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
+          >
+            <app-icon name="chevron-left" class="size-4" />
+            Anterior
+          </button>
+          <button
+            type="button"
+            (click)="irParaPagina(pagina() + 1)"
+            [disabled]="pagina() >= totalPaginas() || carregando()"
+            class="inline-flex items-center gap-1.5 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
+          >
+            Próxima
+            <app-icon name="chevron-right" class="size-4" />
+          </button>
+        </div>
+      </div>
+    }
+  </div>
+</div>

@@ -32,10 +32,46 @@
       <button class="text-sm font-medium px-3.5 py-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">Pedido</button>
       <button class="text-sm font-medium px-3.5 py-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800">Equipe</button>
     </div>
-    <button class="inline-flex items-center gap-2 text-sm font-medium border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 rounded-lg px-3.5 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
-      ACME Corp. Backend App
-      <app-icon name="chevron-down" class="size-3.5" />
-    </button>
+    <!-- As empresas do grupo, pelo apelido (o nome curto do dia a dia). Estava
+         aqui um "ACME Corp. Backend App" fixo, herdado do template visual.
+
+         Multiselect com checkbox, e não uma fileira de chips estáticos, porque
+         é o lugar onde a escolha de empresa vai ficar quando os indicadores
+         desta tela forem reais — o componente já mostra o caminho em vez de
+         precisar ser trocado depois. -->
+    @if (opcoesEmpresa().length) {
+      <p-multiselect
+        styleClass="w-full sm:w-72"
+        [options]="opcoesEmpresa()"
+        optionLabel="rotulo"
+        optionValue="id"
+        [ngModel]="empresasSelecionadas()"
+        (ngModelChange)="empresasSelecionadas.set($event)"
+        [filter]="false"
+        [showToggleAll]="true"
+        placeholder="Empresas"
+        selectedItemsLabel="{0} empresas"
+        [maxSelectedLabels]="3"
+        appendTo="body"
+      >
+        <!-- O apelido é o que se lê de relance; a razão social embaixo resolve
+             quem não conhece a sigla.
+
+             As cores saem das variáveis do tema (`--p-*`), e não de classes
+             cinza do Tailwind: um template customizado substitui a renderização
+             padrão do Aura, e cor chapada aqui deixaria de acompanhar a paleta
+             no modo escuro. O tamanho da fonte pode ser utilitário — ele não
+             muda com o tema. -->
+        <ng-template #item let-empresa>
+          <div class="flex flex-col">
+            <span class="font-semibold">{{ empresa.rotulo }}</span>
+            <span class="text-xs" [style.color]="'var(--p-text-muted-color)'">
+              {{ empresa.nomeFantasia }}
+            </span>
+          </div>
+        </ng-template>
+      </p-multiselect>
+    }
   </div>
 
   <!-- Cards de stats -->

@@ -20,6 +20,30 @@ export interface SituacaoProcesso {
   dataPrimeiroBipe: string | null;
   /** Quando o processo fechou. Nulo = ainda em andamento. */
   dataFim: string | null;
+  /** Quando a etapa foi aberta. Nulo = etapa nunca iniciada. */
+  dataInicio: string | null;
+  /** Execução delegada: quem CLICOU, quando não foi o próprio operador. O
+   *  gerente registra o início e o fim da etapa no nome de quem está separando
+   *  no papel, porque não há coletor para todo mundo. Nulos no caso normal. */
+  usuarioGestorInicioNome: string | null;
+  usuarioGestorFimNome: string | null;
+  /** Derivado dos dois acima pelo backend — a tela não recalcula. */
+  delegado: boolean;
+}
+
+/**
+ * De quando o relógio da etapa conta.
+ *
+ * No caminho normal é o primeiro bipe, e não a abertura: abrir a lista e andar
+ * até o endereço não é tempo de separação.
+ *
+ * Na execução delegada ninguém bipa — o gerente registra o início, o operador
+ * separa no papel e o gerente registra o fim. Ali `dataPrimeiroBipe` é nulo
+ * para sempre, e cair no `dataInicio` é o que faz a coluna mostrar a hora e a
+ * duração em vez de um traço numa etapa que começou e terminou.
+ */
+export function inicioDaEtapa(situacao: SituacaoProcesso): string | null {
+  return situacao.dataPrimeiroBipe ?? situacao.dataInicio;
 }
 
 /** Duração já quebrada em partes, pronta para o badge. */
@@ -74,7 +98,9 @@ export interface Operador {
 
 export interface PedidoExpedicaoLista {
   pedidoId: string;
-  numero: string;
+  /** Nulo quando a origem externa ainda não deu número ao pedido. Use
+  *  `numeroExibicao` para renderizar — ela cobre esse caso. */
+  numero: string | null;
   sistemaOrigemId: string | null;
   dataPedido: string;
   /** Status vindo do ERP (PED, OK, CAN…). */
@@ -82,6 +108,10 @@ export interface PedidoExpedicaoLista {
   /** Só pedido em PED pode abrir separação ou conferência — quem decide é o
    *  backend, a tela só reflete. */
   podeIniciar: boolean;
+  /** Nulo = endereçamento em ordem. Preenchido = a primeira pendência do
+   *  pedido (já com o código do produto na frente). Quando vem preenchido,
+   *  `podeIniciar` é false — a tela não precisa combinar os dois. */
+  bloqueioEnderecamento: string | null;
   /** Data da última alteração: é por ela que a listagem ordena e filtra. */
   alteradoEm: string;
   clienteNomeFantasia: string;
@@ -116,6 +146,14 @@ export interface PedidoExpedicaoListaPaginada {
   perPage: number;
   sort: string;
   sortType: string;
+  /** Quantos pedidos há em cada situação NO PERÍODO — uma chave por
+   *  `FiltroSituacao`, inclusive 'todos'.
+   *
+   *  Contam só o período: ignoram termo, status, empresa, operador e a própria
+   *  situação escolhida. São um painel fixo do galpão naquele intervalo, então
+   *  não mudam enquanto a pessoa mexe nos filtros — é isso que permite usá-los
+   *  para navegar ("tem 3 parados, vou ali ver"). */
+  contagensPorSituacao: Record<FiltroSituacao, number>;
 }
 
 /** Colunas por onde o servidor sabe ordenar. Só existem as que saem da própria
@@ -128,6 +166,16 @@ export type ColunaOrdenavel =
   | 'quantidade_itens'
   | 'liberado_em'
   | 'sync_updated_at';
+
+/** Um endereço em que o lote do item está, e quanto tem nele.
+ *
+ *  A quantidade é o ponto: antes a expedição mostrava só o total do item
+ *  somado, o que não dizia ao operador quanto pegar em cada prateleira. */
+export interface EnderecoItem {
+  enderecoId: string;
+  descricao: string;
+  quantidade: number;
+}
 
 export interface ItemPedidoExpedicao {
   pedidoItemId: string;
@@ -142,7 +190,17 @@ export interface ItemPedidoExpedicao {
   produtoCodigoBarraNotas: string | null;
   produtoCodigosBarrasLogistica: string[];
   produtoDun14: string | null;
-  enderecoProduto: string | null;
+  /** Onde a mercadoria está guardada, com quanto tem em cada lugar. É LISTA
+   *  porque um lote se espalha por vários endereços do galpão — vem de
+   *  `estoque_endereco_lote` (domínio `enderecamento`), não da linha do
+   *  pedido. */
+  enderecos: EnderecoItem[];
+  /** Soma das quantidades acima, calculada no backend. A tela NÃO soma por
+   *  conta própria: é este número que decidiu o bloqueio, e refazer a conta em
+   *  float no navegador daria um total diferente. */
+  quantidadeEnderecada: number;
+  /** Nulo = item consistente. Preenchido = a frase do quadro vermelho. */
+  bloqueio: string | null;
   lote: string | null;
   quantidade: number;
   /** Unidades por embalagem de venda do produto (1 = vendido na unidade).
@@ -156,13 +214,18 @@ export interface ItemPedidoExpedicao {
 
 export interface PedidoExpedicaoDetalhe {
   pedidoId: string;
-  numero: string;
+  numero: string | null;
   sistemaOrigemId: string | null;
   dataPedido: string;
   /** Status vindo do ERP. */
   statusPedido: string;
   /** Só pedido em PED autoriza abrir separação ou conferência. */
   podeIniciar: boolean;
+  bloqueioEnderecamento: string | null;
+  /** Só a barreira do ERP, sem o endereçamento. É ela que os botões de execução
+   *  delegada olham: quem tem `expedicao.enderecamento.liberar` atravessa o
+   *  endereçamento inconsistente, mas nunca o status errado. */
+  statusPermiteIniciar: boolean;
   observacoes: string;
   vendedorNome: string | null;
   clienteCodigo: string | null;
@@ -197,7 +260,10 @@ export interface ItemProcesso {
   produtoCodigoBarraNotas: string | null;
   produtoCodigosBarrasLogistica: string[];
   produtoDun14: string | null;
-  enderecoProduto: string | null;
+  /** Ver ItemPedidoExpedicao — mesmos três campos, mesma origem. */
+  enderecos: EnderecoItem[];
+  quantidadeEnderecada: number;
+  bloqueio: string | null;
   lote: string | null;
   quantidadePedida: number;
   quantidadeProcessada: number;
@@ -215,9 +281,14 @@ export interface Processo {
   pedidoId: string;
   pedidoNumero: string;
   status: 'em_andamento' | 'finalizada';
+  /** De quem é o TRABALHO — o operador. Não muda quando o gerente executa em
+   *  nome dele. */
   usuarioInicioId: string;
   usuarioInicioNome: string | null;
   usuarioFimId: string | null;
+  /** Quem CLICOU, quando não foi o próprio operador. Nulos no caso normal. */
+  usuarioGestorInicioNome: string | null;
+  usuarioGestorFimNome: string | null;
   dataInicio: string | null;
   dataFim: string | null;
   itens: ItemProcesso[];
@@ -235,8 +306,13 @@ export function rotuloTipo(tipo: TipoProcesso): string {
 /** Pedidos vindos de integração externa trazem o identificador de lá — quando
  *  presente, é ele que representa o pedido pra quem está olhando. Mesma regra
  *  de `numeroExibicaoPedido` no domínio de pedidos. */
-export function numeroExibicao(pedido: { numero: string; sistemaOrigemId: string | null }): string {
-  return pedido.sistemaOrigemId || pedido.numero;
+export function numeroExibicao(pedido: {
+  numero: string | null;
+  sistemaOrigemId: string | null;
+}): string {
+  // O traço cobre o pedido externo que chegou sem número e ainda não recebeu um
+  // — a tela precisa desenhar alguma coisa, e um espaço em branco pareceria bug.
+  return pedido.sistemaOrigemId || pedido.numero || '—';
 }
 
 /** O item em andamento bloqueia todos os outros — é essa a regra que a tela de

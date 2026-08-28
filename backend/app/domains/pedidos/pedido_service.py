@@ -169,13 +169,61 @@ def _validar_sistema_origem_disponivel(
         )
 
 
-def _gerar_proximo_numero(sessao_db: Session) -> str:
-    """Numeração sequencial simples (PED-00001, PED-00002, ...). Conta
-    todos os pedidos já criados, inclusive os soft-deletados — não
-    reaproveita número de um pedido apagado, pra manter rastreabilidade
-    fiscal/contábil (um número de pedido nunca deve ser reusado)."""
-    total = sessao_db.query(func.count(Pedido.id)).scalar() or 0
-    return f"PED-{total + 1:05d}"
+def _gerar_proximo_numero(sessao_db: Session, empresa_id: str) -> str:
+    """Numeração sequencial NUMÉRICA, por empresa: 1, 2, 3...
+
+    Só é usada quando o pedido nasce aqui. Pedido que vem do ERP não passa por
+    aqui — o número dele é o `sistema_origem_id`, ver `_numero_do_pedido`.
+
+    **Sem prefixo.** Já foi "PED-00001", e o prefixo atrapalhava mais do que
+    ajudava: o número do pedido é o que o cliente e o vendedor falam ao telefone,
+    e ninguém dita "pê-é-dê-traço". Como código de ERP também é numérico, tirar o
+    prefixo deixa os dois no mesmo formato.
+
+    Parte da contagem e sobe até achar um número livre NAQUELA empresa. O laço
+    existe porque a contagem sozinha não garante nada: os pedidos do ERP entram
+    com o número deles e ocupam faixas quaisquer, então o contador pode cair em
+    cima de um número que já existe. Uma volta a mais é barato — isto só roda
+    quando alguém cria um pedido pela tela, o que é raro.
+
+    Conta inclusive os soft-deletados, e o laço também os enxerga: número de
+    pedido nunca deve ser reusado, por rastreabilidade fiscal.
+    """
+    proximo = sessao_db.query(func.count(Pedido.id)).scalar() or 0
+    while True:
+        proximo += 1
+        numero = str(proximo)
+        existe = (
+            sessao_db.query(Pedido.id)
+            .filter(Pedido.numero == numero, Pedido.empresa_id == empresa_id)
+            .first()
+        )
+        if existe is None:
+            return numero
+
+
+def _numero_do_pedido(
+    sessao_db: Session, sistema_origem_id: str | None, empresa_id: str
+) -> str | None:
+    """O número do pedido: **nulo** quando ele vem do ERP, sequencial daqui
+    quando nasce na tela.
+
+    **Um pedido tem um identificador só.** Quando o ERP manda o pedido, quem
+    identifica é o `sistema_origem_id` — e `numero` fica NULO em vez de repetir
+    aquele mesmo valor. Duplicar o código em duas colunas cria a pergunta "qual
+    dos dois vale?" toda vez que os dois divergirem, e eles divergem: basta uma
+    correção chegar por um caminho e não pelo outro.
+
+    Quem exibe resolve com `sistema_origem_id or numero` — regra que a expedição
+    e a tela de pedidos já aplicavam antes disso, e que agora tem exatamente um
+    lado preenchido em cada caso.
+
+    Sequencial só para o pedido que nasce aqui, porque aí não existe número de
+    lugar nenhum e alguém precisa dar um.
+    """
+    if sistema_origem_id:
+        return None
+    return _gerar_proximo_numero(sessao_db, empresa_id)
 
 
 def _resolver_produto_id(sessao_db: Session, item: ItemPedidoEntradaSchema) -> str:
@@ -247,7 +295,12 @@ def _resolver_status_id(
     return dados.status_id
 
 
-def _montar_itens(sessao_db: Session, itens_entrada: list[ItemPedidoEntradaSchema]) -> list[PedidoItem]:
+def _montar_itens(
+    sessao_db: Session,
+    itens_entrada: list[ItemPedidoEntradaSchema],
+    empresa_sistema_origem_id: str | None = None,
+    pedido_sistema_origem_id: str | None = None,
+) -> list[PedidoItem]:
     """
     Grava cada item exatamente como veio no payload — código, descrição e
     preço são snapshot do que o front enviou. O cadastro de produtos NÃO é
@@ -257,25 +310,128 @@ def _montar_itens(sessao_db: Session, itens_entrada: list[ItemPedidoEntradaSchem
     quando o item vier identificado assim. A FK de `produto_id` continua
     sendo quem garante, no INSERT, que o produto (resolvido ou informado
     direto) existe de fato.
+
+    `empresa_sistema_origem_id` e `pedido_sistema_origem_id` são os valores da
+    CAPA, usados como padrão quando o item não repete o campo: os itens de um
+    pedido são todos da mesma empresa e do mesmo pedido, então obrigar a
+    integração a repetir os mesmos dois textos em cada linha só criaria
+    oportunidade de divergir. Item que informar o seu próprio valor manda nele.
     """
     return [
-        PedidoItem(
-            produto_id=_resolver_produto_id(sessao_db, item),
-            produto_codigo=item.produto_codigo,
-            produto_descricao=item.produto_descricao,
-            quantidade=item.quantidade,
-            preco_unitario=item.preco_unitario,
-            endereco_produto=item.endereco_produto,
-            lote=item.lote,
+        _aplicar_dados_do_item(
+            PedidoItem(),
+            item,
+            _resolver_produto_id(sessao_db, item),
+            empresa_sistema_origem_id,
+            pedido_sistema_origem_id,
         )
         for item in itens_entrada
     ]
 
 
+def _aplicar_dados_do_item(
+    linha: PedidoItem,
+    entrada: ItemPedidoEntradaSchema,
+    produto_id: str,
+    empresa_sistema_origem_id: str | None,
+    pedido_sistema_origem_id: str | None,
+) -> PedidoItem:
+    """Copia o payload para a linha. Serve tanto para uma linha nova quanto para
+    uma que já existe — é o que permite a reconciliação atualizar NO LUGAR em
+    vez de apagar e recriar."""
+    linha.produto_id = produto_id
+    linha.produto_codigo = entrada.produto_codigo
+    linha.produto_descricao = entrada.produto_descricao
+    linha.quantidade = entrada.quantidade
+    linha.preco_unitario = entrada.preco_unitario
+    linha.lote = entrada.lote
+    linha.empresa_sistema_origem_id = (
+        entrada.empresa_sistema_origem_id or empresa_sistema_origem_id
+    )
+    linha.pedido_sistema_origem_id = (
+        entrada.pedido_sistema_origem_id or pedido_sistema_origem_id
+    )
+    linha.produto_sistema_origem_id = entrada.produto_sistema_origem_id
+    return linha
+
+
+def _reconciliar_itens(
+    sessao_db: Session,
+    pedido: Pedido,
+    itens_entrada: list[ItemPedidoEntradaSchema],
+    empresa_sistema_origem_id: str | None = None,
+    pedido_sistema_origem_id: str | None = None,
+) -> None:
+    """Compara o payload com o que já está gravado, linha a linha.
+
+    Antes daqui, `atualizar` apagava fisicamente todas as linhas e inseria
+    outras. Duas coisas quebravam:
+
+    1. **O id do item mudava a cada PUT.** `expedicao_separacao_itens.
+       pedido_item_id` aponta para cá, então uma integração que reenviasse a
+       capa sem mudar nada destruía o vínculo com a separação — em silêncio,
+       ou com erro de FK depois que a expedição passou a existir.
+    2. **Era DELETE físico em model com SyncMixin**, o que o ARCHITECTURE.md
+       proíbe desde sempre. O bug de arquitetura é anterior à expedição; ela só
+       o tornou visível.
+
+    A chave de reconciliação é `(produto_id, lote)` — a mesma de
+    `uq_pedido_itens_pedido_produto_lote` e a mesma que
+    `itens_sem_linha_duplicada` já valida na entrada. O endereço não entra: ele
+    diz onde a mercadoria está no galpão, não o que o cliente comprou.
+
+    Linha que sai do payload é `marcar_apagado()`, nunca `delete()`. Linha
+    apagada que volta é REVIVIDA no lugar, e não reinserida: além de preservar o
+    id, é o que evita o INSERT bater no unique, que enxerga a linha soft-deletada
+    ocupando a chave.
+
+    Não dá `commit()` — quem fecha a transação é `atualizar`, junto com a capa.
+    """
+    # Inclui as apagadas: são elas que ocupam a chave no unique, e reviver é o
+    # comportamento certo quando a mesma linha volta.
+    existentes: dict[tuple[str, str | None], PedidoItem] = {}
+    for linha in pedido.itens:
+        existentes.setdefault((linha.produto_id, linha.lote), linha)
+
+    vistas: set[tuple[str, str | None]] = set()
+    for entrada in itens_entrada:
+        produto_id = _resolver_produto_id(sessao_db, entrada)
+        chave = (produto_id, entrada.lote)
+        vistas.add(chave)
+
+        linha = existentes.get(chave)
+        if linha is None:
+            pedido.itens.append(
+                _aplicar_dados_do_item(
+                    PedidoItem(),
+                    entrada,
+                    produto_id,
+                    empresa_sistema_origem_id,
+                    pedido_sistema_origem_id,
+                )
+            )
+            continue
+
+        _aplicar_dados_do_item(
+            linha, entrada, produto_id, empresa_sistema_origem_id, pedido_sistema_origem_id
+        )
+        # Reviver é explícito: `marcar_apagado` não tem contrapartida em
+        # sync_helpers, e inventar uma só para este caso seria abstração por
+        # antecipação (a expedição, que também soft-deleta, nunca revive nada).
+        linha.sync_deleted_at = None
+        incrementar_versao(linha)
+
+    for chave, linha in existentes.items():
+        if chave not in vistas and linha.sync_deleted_at is None:
+            marcar_apagado(linha)
+
+
 def criar(sessao_db: Session, dados: PedidoCriarSchema) -> Pedido:
     empresa_id = _resolver_empresa_id(sessao_db, dados)
     _validar_sistema_origem_disponivel(sessao_db, dados.sistema_origem_id, empresa_id)
-    itens = _montar_itens(sessao_db, dados.itens)
+    itens = _montar_itens(
+        sessao_db, dados.itens, dados.empresa_sistema_origem_id, dados.sistema_origem_id
+    )
 
     # A capa (Pedido) e os itens são gravados num único Session.commit():
     # `Pedido.itens` tem cascade="all, delete-orphan" (ver pedido_model.py),
@@ -286,7 +442,7 @@ def criar(sessao_db: Session, dados: PedidoCriarSchema) -> Pedido:
     # faz o rollback explícito no except antes de devolver a conexão pro
     # pool, então não há transação "pendurada" nem escrita parcial.
     pedido = Pedido(
-        numero=_gerar_proximo_numero(sessao_db),
+        numero=_numero_do_pedido(sessao_db, dados.sistema_origem_id, empresa_id),
         data_pedido=dados.data_pedido,
         cliente_id=dados.cliente_id,
         cliente_nome_fantasia=dados.cliente_nome_fantasia,
@@ -329,8 +485,6 @@ def atualizar(
     sistema_origem_id_final = dados.sistema_origem_id or sistema_origem_id
     _validar_sistema_origem_disponivel(sessao_db, sistema_origem_id_final, empresa_id, ignorar_id=pedido.id)
 
-    itens = _montar_itens(sessao_db, dados.itens)
-
     pedido.data_pedido = dados.data_pedido
     pedido.cliente_id = dados.cliente_id
     pedido.cliente_nome_fantasia = dados.cliente_nome_fantasia
@@ -343,17 +497,30 @@ def atualizar(
         pedido.liberado_em = dados.liberado_em
     pedido.vendedor_id = _resolver_vendedor_id(sessao_db, dados)
     pedido.sistema_origem_id = sistema_origem_id_final
+    # Pedido que passa a ter identidade no ERP larga o número local: quem
+    # identifica passa a ser o `sistema_origem_id`, e manter os dois
+    # preenchidos recria a pergunta "qual dos dois vale?" (ver
+    # `_numero_do_pedido`).
+    if sistema_origem_id_final:
+        pedido.numero = None
     pedido.status_id = _resolver_status_id(sessao_db, dados)
     pedido.observacoes = dados.observacoes
     incrementar_versao(pedido)
 
-    for item_antigo in list(pedido.itens):
-        sessao_db.delete(item_antigo)
-    pedido.itens = itens
+    # `sistema_origem_id_final`, e não `dados.sistema_origem_id`: no PUT que
+    # localiza o pedido pela query string o corpo pode não repetir o campo, e os
+    # itens ficariam sem a perna do pedido por um detalhe de transporte.
+    _reconciliar_itens(
+        sessao_db,
+        pedido,
+        dados.itens,
+        dados.empresa_sistema_origem_id,
+        sistema_origem_id_final,
+    )
 
-    # Mesmo raciocínio de criar(): um único commit no fim cobre a
-    # atualização da capa + a troca completa dos itens (delete dos antigos
-    # + insert dos novos). Se algo falhar, o commit inteiro é desfeito.
+    # Mesmo raciocínio de criar(): um único commit no fim cobre a atualização da
+    # capa + a reconciliação dos itens. Se algo falhar, o commit inteiro é
+    # desfeito.
     sessao_db.commit()
     sessao_db.refresh(pedido)
     return pedido

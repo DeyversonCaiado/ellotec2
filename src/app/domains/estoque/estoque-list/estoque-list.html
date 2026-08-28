@@ -1,0 +1,142 @@
+<div class="p-4 sm:p-6 max-w-[1400px] mx-auto">
+
+  <app-page-header titulo="Estoque" subtitulo="Saldo por produto e por lote — espelho do ERP, consulta apenas" />
+
+  <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+    <div class="p-4 border-b border-gray-100 dark:border-gray-800 flex flex-col sm:flex-row sm:items-center gap-3">
+      <!-- Duas visões da mesma mercadoria, não dois módulos: o saldo total e o
+           mesmo saldo aberto por lote. Aba, e não item de menu separado. -->
+      <div class="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 p-0.5 bg-gray-50 dark:bg-gray-800/60">
+        <button
+          type="button"
+          (click)="trocarAba('saldos')"
+          [class]="aba() === 'saldos'
+            ? 'px-4 py-1.5 text-sm font-semibold rounded-md bg-white dark:bg-gray-900 text-brand-600 dark:text-brand-400 shadow-sm'
+            : 'px-4 py-1.5 text-sm font-semibold rounded-md text-gray-500 dark:text-gray-400'">
+          Saldo por produto
+        </button>
+        <button
+          type="button"
+          (click)="trocarAba('lotes')"
+          [class]="aba() === 'lotes'
+            ? 'px-4 py-1.5 text-sm font-semibold rounded-md bg-white dark:bg-gray-900 text-brand-600 dark:text-brand-400 shadow-sm'
+            : 'px-4 py-1.5 text-sm font-semibold rounded-md text-gray-500 dark:text-gray-400'">
+          Por lote
+        </button>
+      </div>
+
+      <select
+        [ngModel]="empresaId()"
+        (ngModelChange)="onEmpresaChange($event)"
+        class="py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm sm:w-56 sm:ms-auto focus:border-brand-500 focus:ring-brand-500"
+      >
+        <option value="">Todas as empresas</option>
+        @for (empresa of empresas(); track empresa.id) {
+          <option [value]="empresa.id">{{ empresa.apelido || empresa.nomeFantasia }}</option>
+        }
+      </select>
+    </div>
+
+    @if (carregando()) {
+      <div class="p-12 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm gap-2">
+        <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+        </svg>
+        Carregando estoque...
+      </div>
+    } @else if (aba() === 'saldos') {
+
+      @if (saldos().length === 0) {
+        <div class="p-12 text-center text-gray-400 dark:text-gray-500 text-sm">Nenhum saldo encontrado.</div>
+      } @else {
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-100 dark:divide-gray-800">
+            <thead class="bg-gray-50 dark:bg-gray-800/60">
+              <tr>
+                <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Produto</th>
+                <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Empresa</th>
+                <th class="px-5 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Quantidade</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+              @for (saldo of saldos(); track saldo.id) {
+                <tr class="hover:bg-gray-50/60 dark:hover:bg-gray-800/40">
+                  <td class="px-5 py-3.5">
+                    <p class="text-sm text-gray-800 dark:text-gray-100">{{ saldo.produtoDescricao || '—' }}</p>
+                    <p class="text-xs font-mono text-gray-400 dark:text-gray-500">{{ saldo.produtoCodigo }}</p>
+                  </td>
+                  <td class="px-5 py-3.5 text-sm text-gray-600 dark:text-gray-300">{{ nomeEmpresa(saldo.empresaId) }}</td>
+                  <td class="px-5 py-3.5 text-sm text-end font-semibold text-gray-800 dark:text-gray-100">{{ saldo.quantidade }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+
+    } @else {
+
+      @if (lotes().length === 0) {
+        <div class="p-12 text-center text-gray-400 dark:text-gray-500 text-sm">Nenhum lote encontrado.</div>
+      } @else {
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-100 dark:divide-gray-800">
+            <thead class="bg-gray-50 dark:bg-gray-800/60">
+              <tr>
+                <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Produto</th>
+                <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Lote</th>
+                <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Empresa</th>
+                <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Vencimento</th>
+                <th class="px-5 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Quantidade</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+              @for (lote of lotes(); track lote.id) {
+                <tr class="hover:bg-gray-50/60 dark:hover:bg-gray-800/40">
+                  <td class="px-5 py-3.5">
+                    <p class="text-sm text-gray-800 dark:text-gray-100">{{ lote.produtoDescricao || '—' }}</p>
+                    <p class="text-xs font-mono text-gray-400 dark:text-gray-500">{{ lote.produtoCodigo }}</p>
+                  </td>
+                  <td class="px-5 py-3.5 text-sm font-mono text-gray-700 dark:text-gray-200">{{ lote.lote }}</td>
+                  <td class="px-5 py-3.5 text-sm text-gray-600 dark:text-gray-300">{{ nomeEmpresa(lote.empresaId) }}</td>
+                  <td class="px-5 py-3.5 text-sm">
+                    @if (lote.vencimento) {
+                      <span class="text-gray-700 dark:text-gray-200">{{ lote.vencimento | date: 'dd/MM/yyyy' }}</span>
+                      @if (diasParaVencer(lote.vencimento)! < 0) {
+                        <span class="ms-2 inline-flex items-center gap-1 text-xs font-semibold text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/30 rounded-full px-2 py-0.5">Vencido</span>
+                      } @else if (diasParaVencer(lote.vencimento)! <= 90) {
+                        <span class="ms-2 inline-flex items-center gap-1 text-xs font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 rounded-full px-2 py-0.5">{{ diasParaVencer(lote.vencimento) }} d</span>
+                      }
+                    } @else {
+                      <span class="text-gray-400 dark:text-gray-500">—</span>
+                    }
+                  </td>
+                  <td class="px-5 py-3.5 text-sm text-end font-semibold text-gray-800 dark:text-gray-100">{{ lote.quantidade }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    }
+
+    <!-- Sentinela do scroll infinito -->
+    <div #sentinela class="h-1"></div>
+
+    @if (carregandoMais()) {
+      <div class="p-4 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm gap-2">
+        <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+        </svg>
+        Carregando mais...
+      </div>
+    }
+  </div>
+
+  <p class="mt-3 text-xs text-gray-400 dark:text-gray-500 flex items-start gap-1.5">
+    <app-icon name="help" class="size-3.5 mt-0.5 shrink-0" />
+    Saldo e lote são alimentados pela integração do ERP. Para mudar quantidade, corrija no ERP — aqui é consulta.
+  </p>
+</div>

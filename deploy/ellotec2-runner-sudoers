@@ -1,0 +1,16 @@
+# Permite ao usuário do runner do GitHub Actions (ello) executar SÓ os comandos
+# do deploy sem pedir senha. Sem isso o workflow trava para sempre esperando
+# uma senha que ninguém vai digitar.
+#
+# Instalação (uma vez, como root — visudo valida a sintaxe antes de salvar,
+# um erro aqui pode travar o sudo da máquina inteira):
+#   sudo cp deploy/ellotec2-runner-sudoers /etc/sudoers.d/ellotec2-deploy
+#   sudo chmod 0440 /etc/sudoers.d/ellotec2-deploy
+#   sudo visudo -c
+
+ello ALL=(root) NOPASSWD: /usr/bin/systemctl restart ellotec2-api, \
+                          /usr/bin/systemctl restart ellotec2-sincronizacao, \
+                          /usr/bin/journalctl -u ellotec2-api *, \
+                          /usr/bin/rsync, \
+                          /usr/bin/mkdir, \
+                          /usr/bin/chown

@@ -45,12 +45,35 @@ export type PermissaoKey =
   | 'empresas.gravar.incluir'
   | 'empresas.gravar.editar'
   | 'empresas.apagar'
+  // --- Estoque (saldo por produto e por lote) ---
+  | 'estoque.acessar'
+  | 'estoque.gravar.incluir'
+  | 'estoque.gravar.editar'
+  | 'estoque.apagar'
+  // --- Endereçamento (onde cada lote está guardado no galpão) ---
+  | 'enderecamento.acessar'
+  | 'enderecamento.gravar.incluir'
+  | 'enderecamento.gravar.editar'
+  | 'enderecamento.apagar'
+  // --- Notas fiscais (entradas e saídas — mesma tabela, mesmo domínio) ---
+  | 'notas_fiscais.acessar'
+  | 'notas_fiscais.gravar.incluir'
+  | 'notas_fiscais.gravar.editar'
+  | 'notas_fiscais.apagar'
+  // --- Entregas (acompanhamento pós-faturamento) ---
+  | 'entregas.acessar'
+  | 'entregas.ver_todas'
+  | 'entregas.interacao.registrar'
+  | 'entregas.interacao.apagar'
+  | 'entregas.integrar'
   // --- Expedição (separação e conferência) ---
   | 'expedicao.acessar'
   | 'expedicao.separacao.executar'
   | 'expedicao.conferencia.executar'
   | 'expedicao.resetar'
-  | 'expedicao.atribuir';
+  | 'expedicao.atribuir'
+  | 'expedicao.delegar'
+  | 'expedicao.enderecamento.liberar';
 
 /** O que o usuário carrega — simples e verificável em O(1).
  * Serializado como array de strings no JSON (backend → front) e convertido

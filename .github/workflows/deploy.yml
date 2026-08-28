@@ -1,0 +1,100 @@
+# Deploy do ELLOTEC ERP no servidor de produção (192.168.20.12).
+#
+# Roda no runner self-hosted instalado em ~/actions-runner/ellotec2.
+# O runner clona o repositório numa pasta descartável (_work/...) — o código
+# que fica no ar é o que este workflow copia para /home/ello/projetos/ellotec2.
+#
+# Pré-requisitos no servidor (feitos uma única vez, ver backend/README.md):
+#   - /home/ello/projetos/ellotec2/backend/.env com as credenciais de produção
+#   - serviços ellotec2-api e ellotec2-sincronizacao instalados
+#   - site do nginx ellotec2 habilitado na porta 8504
+name: Deploy producao
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # permite disparar manualmente pela aba Actions
+
+# Dois deploys ao mesmo tempo escreveriam na mesma pasta. O segundo espera.
+concurrency:
+  group: deploy-producao
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    env:
+      DESTINO_BACKEND: /home/ello/projetos/ellotec2/backend
+      DESTINO_FRONT: /home/ello/projetos/ellotec2/front
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------
+      # Front Angular
+      # ---------------------------------------------------------------
+      - name: Instalar dependencias do front
+        # `npm ci` (e não `npm install`) — respeita o package-lock.json à risca,
+        # que é o que garante que produção roda a mesma versão testada.
+        run: npm ci
+
+      - name: Build de producao
+        run: npm run build -- --configuration production
+
+      - name: Publicar o front em /home/ello/projetos/ellotec2/front
+        # --delete remove do servidor os arquivos que sumiram do build (os
+        # bundles antigos com hash no nome), senão a pasta cresce a cada deploy.
+        run: |
+          mkdir -p "$DESTINO_FRONT"
+          rsync -a --delete dist/fuse-erp/browser/ "$DESTINO_FRONT"/
+
+      # ---------------------------------------------------------------
+      # Backend FastAPI
+      # ---------------------------------------------------------------
+      - name: Publicar o codigo do backend
+        # Preserva no servidor o que NÃO vem do git e não pode ser apagado:
+        # o .env de produção, a virtualenv, os logs e os checkpoints da
+        # sincronização (arquivos *_controle.txt).
+        run: |
+          mkdir -p "$DESTINO_BACKEND"
+          rsync -a --delete \
+            --exclude '.venv/' \
+            --exclude '.env' \
+            --exclude 'log/' \
+            --exclude '*_controle.txt' \
+            backend/ "$DESTINO_BACKEND"/
+
+      - name: Instalar dependencias novas do Python
+        # Cria a virtualenv na primeira vez e, nas seguintes, instala apenas o
+        # que mudou no requirements.txt — pacote já na versão certa o pip pula.
+        run: |
+          if [ ! -x "$DESTINO_BACKEND/.venv/bin/python" ]; then
+            python3 -m venv "$DESTINO_BACKEND/.venv"
+          fi
+          "$DESTINO_BACKEND/.venv/bin/pip" install --upgrade pip
+          "$DESTINO_BACKEND/.venv/bin/pip" install -r "$DESTINO_BACKEND/requirements.txt"
+
+      - name: Aplicar migracoes do banco
+        working-directory: /home/ello/projetos/ellotec2/backend
+        run: .venv/bin/alembic upgrade head
+
+      - name: Reiniciar os servicos
+        run: |
+          sudo systemctl restart ellotec2-api
+          sudo systemctl restart ellotec2-sincronizacao
+
+      - name: Conferir se a API subiu
+        # Falha o deploy se a API não responder — melhor o workflow ficar
+        # vermelho do que o serviço morrer em silêncio.
+        run: |
+          for i in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:8000/docs > /dev/null; then
+              echo "API respondendo."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API nao respondeu em 30s:"
+          sudo journalctl -u ellotec2-api -n 50 --no-pager
+          exit 1

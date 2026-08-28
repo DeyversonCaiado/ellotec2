@@ -352,6 +352,38 @@ no `SchemaBase`), então o front não precisa converter nada — manda o que já
 **Não crie models TypeScript com snake_case.** O contrato é camelCase de ponta
 a ponta, e o único lugar que conhece snake_case é o código Python interno do backend.
 
+### Os campos `sync*` nunca entram na regra de negócio
+
+Toda tabela do backend tem cinco campos de sincronização, que chegam ao front
+como `syncCreatedAt`, `syncUpdatedAt`, `syncDeletedAt`, `syncVersion` e
+`syncSyncedAt`. Eles existem para auditoria e para o futuro processo de
+replicação entre réplicas — e **é proibido usá-los como dado de negócio**.
+
+Conta como uso proibido, em qualquer tela:
+
+- ordenar eventos por `syncCreatedAt` (linha do tempo, histórico, ocorrências);
+- exibir `syncCreatedAt`/`syncUpdatedAt` como se fosse um fato do negócio
+  ("registrado em", "entregue em", "aprovado em");
+- filtrar período por `syncUpdatedAt` — o período é sempre a data de negócio
+  (data do pedido, data de emissão, data da interação);
+- usá-los em qualquer cálculo (prazo, SLA, idade do documento).
+
+O motivo é que esses campos descrevem **a linha**, não o **fato**. Um
+reprocessamento da integração, uma correção de texto ou uma futura rotina de
+replicação tocam a linha e mexem em `syncUpdatedAt` sem que nada tenha
+acontecido no negócio. Quem ordenou a timeline por `syncCreatedAt` vê a ordem
+mudar sozinha; quem filtrou por `syncUpdatedAt` vê o documento entrar e sair do
+período.
+
+**Quando o negócio precisa de um instante, o backend cria uma coluna própria** e
+o front consome essa coluna. Foi assim que nasceu
+`entrega_nota_interacoes.data_interacao` (`dataInteracao`), que substituiu o uso
+de `syncCreatedAt` na linha do tempo da gestão de entregas.
+
+O uso legítimo dos `sync*` é diagnóstico — "quando esta linha foi tocada pela
+última vez pela integração" —, e nesse caso o rótulo na tela precisa deixar
+claro que é sobre o registro, não sobre o fato.
+
 ## Regras de lint / import (a fazer cumprir)
 
 > Esta seção é a **autoridade** sobre o que pode atravessar a fronteira de um
@@ -386,6 +418,15 @@ No front isso é mais simples que no backend: services Angular são singletons
 (`providedIn: 'root'`), então **injetar o service do domínio dono é o canal
 correto** — é exatamente para isso que existe a injeção de dependência do
 Angular. Não existe aqui o equivalente do `<dominio>_publico.py` do backend.
+
+> **A regra de escrita aqui é mais dura que a do backend, e isso é de propósito.**
+> Lá, um domínio pode pedir a outro que altere o estado dele por uma função de
+> borda sem `commit()` (ver "Escrita pela borda" no `backend/ARCHITECTURE.md`),
+> porque tudo acontece numa transação só. Aqui não existe transação: cada
+> chamada é um HTTP independente, que pode falhar sozinho e deixar metade feita.
+> Escrita cruzada no front continua sendo **não. Nunca.** — se uma tela precisa
+> gravar em dois domínios, quem coordena isso é **um endpoint do backend**, não
+> dois `subscribe` em sequência.
 
 ### O que PODE (com exemplos concretos)
 
@@ -451,7 +492,7 @@ config, restringindo imports por padrão de path.
   cuida do layout da página e dos espaçamentos entre componentes. Não use
   classes Tailwind para sobrescrever internos de componentes PrimeNG — use o
   mecanismo de Pass Through (PT) ou variáveis CSS do tema para isso.
-- **PrimeNG v22** como biblioteca de componentes UI. Detalhes de setup e uso
+- **PrimeNG v20** como biblioteca de componentes UI. Detalhes de setup e uso
   estão na seção abaixo.
 - **Reactive Forms** (`FormBuilder`, `ReactiveFormsModule`) em todos os
   formulários de domínio. Usamos `inject()` em vez de injeção via
@@ -570,7 +611,7 @@ export class MeuComponente { ... }
 > ¹ `MultiSelect` como componente separado existe no v20 mas está **deprecated** —
 > use `<p-select [multiple]="true">` para novas implementações.
 >
-> ² `Drawer` é um componente **novo no v22** (substituindo `Sidebar` do Preline).
+> ² `Drawer` é o componente do v20 que substitui o `Sidebar` do Preline.
 > Ideal para o menu lateral do shell quando em modo mobile/offcanvas.
 
 ### Serviços globais do PrimeNG que precisam de provider
@@ -587,7 +628,7 @@ que consome, não globalmente, exceto onde indicado.
 
 ### PrimeIcons
 
-PrimeNG v22 usa ícones SVG via `PrimeIcons` (pacote `primeicons`).
+PrimeNG v20 usa ícones SVG via `PrimeIcons` (pacote `primeicons`).
 O `shared/ui/icon.component.ts` existente pode ser mantido para ícones
 customizados do sistema, mas para ícones padrão dentro de componentes
 PrimeNG (botões, inputs, menus), use a API nativa do componente:
@@ -605,7 +646,7 @@ necessário nenhuma entrada em `angular.json`. Se precisar de ícones além do
 catálogo PrimeIcons, use o `icon.component.ts` existente com SVGs inline.
 
 > **Atenção:** o pacote `primeng/icons` (ícones como componentes Angular
-> standalone) foi **deprecated no v22** e será removido no v24. Não use
+> standalone) está **deprecated** e será removido numa versão futura. Não use
 > `import { ... } from 'primeng/icons/...'` em código novo.
 
 ### Pass Through (PT) — como customizar internos sem quebrar o tema
@@ -633,7 +674,7 @@ mesmo componente na aplicação.
   de `data-hs-*` no HTML ou `hs-*` em classes, remova e substitua pelo
   equivalente PrimeNG da tabela de mapeamento acima.
 - **Não use `MultiSelect` standalone em código novo** — está deprecated no
-  v22. Use `<p-select [multiple]="true">`.
+  v20. Use `<p-select [multiple]="true">`.
 
 ## Onde cada coisa fica (perguntas frequentes para o agente de IA)
 

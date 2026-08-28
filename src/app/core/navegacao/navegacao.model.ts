@@ -158,8 +158,68 @@ export const ESTRUTURA_APP: SecaoApp[] = [
         ],
       },
       {
+        titulo: 'Fiscal',
+        modulos: [
+          {
+            // Um item só, e não "Notas Entradas" + "Notas Saídas": entrada e
+            // saída são o mesmo documento visto dos dois lados, guardado na
+            // mesma tabela e distinguido por `tipo_operacao`. A separação é
+            // uma aba dentro da tela, espelhando o modelo de dados em vez de
+            // inventar uma divisão que o banco não faz.
+            rotulo: 'Notas Fiscais',
+            icone: 'file-text',
+            rota: '/notas-fiscais',
+            acoes: [
+              { label: 'Acessar listagem', chave: 'notas_fiscais.acessar' },
+              { label: 'Incluir', chave: 'notas_fiscais.gravar.incluir' },
+              { label: 'Editar', chave: 'notas_fiscais.gravar.editar' },
+              { label: 'Apagar', chave: 'notas_fiscais.apagar' },
+            ],
+          },
+        ],
+      },
+      {
         titulo: 'WMS',
         modulos: [
+          {
+            // O acompanhamento pós-faturamento: onde a nota está, quanto tempo
+            // falta para vencer o prazo e o histórico de interações. Substitui
+            // a tela em Streamlit que lia o Oracle do ERP direto.
+            rotulo: 'Gestão de Entregas',
+            icone: 'truck',
+            rota: '/entregas',
+            acoes: [
+              { label: 'Acessar listagem', chave: 'entregas.acessar' },
+              // Sem esta, o vendedor enxerga só as notas em que ele é o
+              // vendedor — é o `visualiza_vendas_proprias` do sistema antigo.
+              { label: 'Ver entregas de todos os vendedores', chave: 'entregas.ver_todas' },
+              { label: 'Registrar e corrigir interação', chave: 'entregas.interacao.registrar' },
+              { label: 'Remover interação', chave: 'entregas.interacao.apagar' },
+            ],
+          },
+          {
+            // Consulta do saldo, por produto e por lote. Só `acessar` aparece
+            // aqui: quem grava estoque é a integração do ERP, e a chave de
+            // gravação fica fora da árvore pelo mesmo motivo de
+            // `entregas.integrar` — não é permissão de gente, é de integração.
+            rotulo: 'Estoque',
+            icone: 'box',
+            rota: '/estoque',
+            acoes: [{ label: 'Consultar saldo e lotes', chave: 'estoque.acessar' }],
+          },
+          {
+            // Os lugares do galpão. Cadastro que uma PESSOA mexe (montou uma
+            // prateleira nova, mudou a etiqueta), então tem as quatro ações.
+            rotulo: 'Endereçamento',
+            icone: 'scrumboard',
+            rota: '/enderecamento',
+            acoes: [
+              { label: 'Acessar listagem', chave: 'enderecamento.acessar' },
+              { label: 'Incluir', chave: 'enderecamento.gravar.incluir' },
+              { label: 'Editar', chave: 'enderecamento.gravar.editar' },
+              { label: 'Apagar', chave: 'enderecamento.apagar' },
+            ],
+          },
           {
             rotulo: 'Expedição',
             icone: 'truck',
@@ -170,6 +230,11 @@ export const ESTRUTURA_APP: SecaoApp[] = [
               { label: 'Executar conferência', chave: 'expedicao.conferencia.executar' },
               { label: 'Resetar separação/conferência', chave: 'expedicao.resetar' },
               { label: 'Atribuir pedidos a operadores', chave: 'expedicao.atribuir' },
+              { label: 'Iniciar/finalizar em nome do operador', chave: 'expedicao.delegar' },
+              {
+                label: 'Liberar pedido com endereçamento inconsistente',
+                chave: 'expedicao.enderecamento.liberar',
+              },
             ],
           },
         ],

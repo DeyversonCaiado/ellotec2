@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.domains.produtos.produto_model import Produto, ProdutoCodigoBarras
@@ -26,6 +26,38 @@ def obter_id_por_sistema_origem_id(sessao_db: Session, sistema_origem_id: str) -
         .first()
     )
     return produto.id if produto else None
+
+
+@dataclass(frozen=True)
+class ProdutoIdentificacao:
+    """Como o produto se chama numa listagem: o código e a descrição.
+
+    Existe porque telas de outros domínios (estoque, endereçamento) guardam só
+    o `produto_id` e precisam mostrar algo legível. É dado VIVO, não snapshot:
+    corrigiu a descrição no cadastro, a listagem de estoque mostra a corrigida —
+    diferente do pedido, que congela o que foi vendido.
+    """
+
+    codigo: str
+    descricao: str
+
+
+def obter_identificacoes(
+    sessao_db: Session, produto_ids: list[str]
+) -> dict[str, ProdutoIdentificacao]:
+    """produto_id -> código e descrição, numa consulta só. Ids sem cadastro
+    vivo ficam de fora, e quem consome decide o que exibir."""
+    if not produto_ids:
+        return {}
+    linhas = (
+        sessao_db.query(Produto.id, Produto.codigo, Produto.descricao)
+        .filter(Produto.id.in_(set(produto_ids)), Produto.sync_deleted_at.is_(None))
+        .all()
+    )
+    return {
+        id_: ProdutoIdentificacao(codigo=codigo, descricao=descricao)
+        for id_, codigo, descricao in linhas
+    }
 
 
 @dataclass(frozen=True)
@@ -73,6 +105,57 @@ def obter_para_expedicao(sessao_db: Session, produto_ids: list[str]) -> dict[str
         )
         for produto in produtos
     }
+
+
+def buscar_ids_por_termo(sessao_db: Session, termo: str) -> list[str]:
+    """Ids dos produtos que casam com um termo digitado por uma pessoa.
+
+    Procura em tudo que identifica o produto para quem está no galpão: código
+    interno, descrição, o código de barras da nota, o DUN-14 e os códigos de
+    logística cadastrados aqui.
+
+    **Por que a busca mora neste domínio.** "O que conta como identificar um
+    produto" é regra de `produtos` — é ele que sabe que existem três origens de
+    código de barras e onde cada uma fica. Quem precisa filtrar por produto
+    (a consulta de endereçamento, hoje) pergunta e recebe ids; se amanhã nascer
+    uma quarta origem de código, ela passa a valer em todas as telas de uma vez,
+    sem ninguém reescrever um `ilike` por conta própria.
+
+    Diferente de `obter_por_codigo_barras`, que é a bipagem: lá a leitura é de
+    máquina, exige acerto exato e devolve UM produto. Aqui é gente digitando um
+    pedaço, então é `LIKE` e devolve todos os que casam.
+    """
+    termo = (termo or "").strip()
+    if not termo:
+        return []
+
+    padrao = f"%{termo}%"
+    ids = {
+        id_
+        for (id_,) in sessao_db.query(Produto.id)
+        .filter(
+            Produto.sync_deleted_at.is_(None),
+            or_(
+                Produto.codigo.ilike(padrao),
+                Produto.descricao.ilike(padrao),
+                Produto.codigo_barra_notas.ilike(padrao),
+                Produto.dun_14.ilike(padrao),
+            ),
+        )
+        .all()
+    }
+    ids.update(
+        id_
+        for (id_,) in sessao_db.query(ProdutoCodigoBarras.produto_id)
+        .join(Produto, Produto.id == ProdutoCodigoBarras.produto_id)
+        .filter(
+            ProdutoCodigoBarras.codigo.ilike(padrao),
+            ProdutoCodigoBarras.sync_deleted_at.is_(None),
+            Produto.sync_deleted_at.is_(None),
+        )
+        .all()
+    )
+    return list(ids)
 
 
 def obter_sistema_origem_id(sessao_db: Session, produto_id: str) -> str | None:

@@ -7,24 +7,34 @@ fecha), só mudam a tabela e o nome da coluna de quantidade. Por isso existe
 regra mora num lugar só, e uma correção não precisa ser feita duas vezes.
 
 Fronteiras com outros domínios: este arquivo só conversa com `pedidos`,
-`clientes`, `produtos` e `usuarios` pelos respectivos `*_publico.py`
-(ver ARCHITECTURE.md → "Regras de import entre domínios").
+`clientes`, `produtos`, `usuarios`, `estoque` e `enderecamento` pelos
+respectivos `*_publico.py` (ver ARCHITECTURE.md → "Regras de import entre
+domínios").
+
+O endereço da mercadoria é o caso mais novo dessa lista e vale explicar: ele
+NÃO está mais na linha do pedido. A expedição parte do par (produto, lote) do
+item, pede a `estoque_publico` o id do lote e pede a `enderecamento_publico` os
+endereços daquele lote — dois canais de leitura, nenhuma query em tabela alheia.
 """
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.domains.clientes import cliente_publico
 from app.domains.empresas import empresa_publico
+from app.domains.enderecamento import enderecamento_publico
+from app.domains.estoque import estoque_publico
 from app.domains.expedicao.expedicao_contrato import (
     AtribuicaoSchema,
     AtribuirSchema,
     BiparSchema,
     EmpresaFiltroSchema,
     CredencialGerenteSchema,
+    EnderecoItemSchema,
     FinalizarItemSchema,
     ItemPedidoExpedicaoSchema,
     ItemProcessoRespostaSchema,
@@ -213,7 +223,31 @@ def _processo_vivo(sessao_db: Session, tipo: TipoProcesso, pedido_id: str):
     )
 
 
-def _situacao(sessao_db: Session, tipo: TipoProcesso, pedido_id: str, total_itens: int) -> SituacaoProcessoSchema:
+def _linhas_que_contam(processo, ids_do_pedido: set[str] | None = None) -> list:
+    """As linhas vivas do processo que ainda correspondem a um item do pedido.
+
+    A integração pode remover uma linha de um pedido que já está no galpão. Do
+    lado de `pedidos` isso é um `marcar_apagado()`, e a linha some da fronteira
+    (`pedido_publico`). Do lado de cá sobra uma linha de separação órfã: viva na
+    tabela, invisível na tela (`_para_resposta_processo` só monta o que ainda
+    está no pedido) e sem jeito de ser finalizada.
+
+    Sem este filtro, essa linha órfã trava o processo para sempre — "todos os
+    itens fecharam?" nunca dá verdadeiro — e o cabeçalho passa a mostrar coisas
+    como "2 de 1", porque os finalizados vêm do processo e o total vem do pedido.
+
+    `ids_do_pedido` nulo significa "não sei quais são" e devolve tudo, para o
+    chamador que não tem o pedido em mãos não pagar uma consulta a mais.
+    """
+    vivas = [linha for linha in processo.itens if linha.sync_deleted_at is None]
+    if ids_do_pedido is None:
+        return vivas
+    return [linha for linha in vivas if linha.pedido_item_id in ids_do_pedido]
+
+
+def _situacao(
+    sessao_db: Session, tipo: TipoProcesso, pedido_id: str, ids_do_pedido: set[str]
+) -> SituacaoProcessoSchema:
     configuracao = _config(tipo)
     processo = _processo_vivo(sessao_db, tipo, pedido_id)
     if processo is None:
@@ -223,21 +257,33 @@ def _situacao(sessao_db: Session, tipo: TipoProcesso, pedido_id: str, total_iten
             usuario_id=None,
             usuario_nome=None,
             itens_finalizados=0,
-            itens_total=total_itens,
+            itens_total=len(ids_do_pedido),
             tem_divergencia=False,
         )
 
-    itens_vivos = [item for item in processo.itens if item.sync_deleted_at is None]
+    itens_vivos = _linhas_que_contam(processo, ids_do_pedido)
+    nomes_gestor = usuario_publico.obter_nomes(
+        sessao_db,
+        [
+            id_gestor
+            for id_gestor in (processo.usuario_gestor_inicio_id, processo.usuario_gestor_fim_id)
+            if id_gestor
+        ],
+    )
     return SituacaoProcessoSchema(
         id=processo.id,
         status=processo.status,
         usuario_id=processo.usuario_inicio_id,
         usuario_nome=usuario_publico.obter_nome(sessao_db, processo.usuario_inicio_id),
         itens_finalizados=sum(1 for item in itens_vivos if item.data_fim is not None),
-        itens_total=total_itens,
+        itens_total=len(ids_do_pedido),
         tem_divergencia=any(item.divergente for item in itens_vivos),
         data_primeiro_bipe=processo.data_primeiro_bipe,
         data_fim=processo.data_fim,
+        data_inicio=processo.data_inicio,
+        usuario_gestor_inicio_nome=nomes_gestor.get(processo.usuario_gestor_inicio_id),
+        usuario_gestor_fim_nome=nomes_gestor.get(processo.usuario_gestor_fim_id),
+        delegado=bool(processo.usuario_gestor_inicio_id or processo.usuario_gestor_fim_id),
     )
 
 
@@ -270,8 +316,20 @@ def _situacoes_da_pagina(
     for processo in processos:
         por_pedido.setdefault(processo.pedido_id, processo)
 
+    # Operadores e gestores num lote só — são todos nomes de usuário, e separar
+    # em duas consultas dobraria as idas ao banco por página sem ganhar nada.
     nomes = usuario_publico.obter_nomes(
-        sessao_db, [processo.usuario_inicio_id for processo in por_pedido.values()]
+        sessao_db,
+        [
+            id_usuario
+            for processo in por_pedido.values()
+            for id_usuario in (
+                processo.usuario_inicio_id,
+                processo.usuario_gestor_inicio_id,
+                processo.usuario_gestor_fim_id,
+            )
+            if id_usuario
+        ],
     )
 
     situacoes: dict[str, SituacaoProcessoSchema] = {}
@@ -289,7 +347,7 @@ def _situacoes_da_pagina(
             )
             continue
 
-        itens_vivos = [item for item in processo.itens if item.sync_deleted_at is None]
+        itens_vivos = _linhas_que_contam(processo, {item.id for item in pedido.itens})
         situacoes[pedido.id] = SituacaoProcessoSchema(
             id=processo.id,
             status=processo.status,
@@ -300,6 +358,10 @@ def _situacoes_da_pagina(
             tem_divergencia=any(item.divergente for item in itens_vivos),
             data_primeiro_bipe=processo.data_primeiro_bipe,
             data_fim=processo.data_fim,
+            data_inicio=processo.data_inicio,
+            usuario_gestor_inicio_nome=nomes.get(processo.usuario_gestor_inicio_id),
+            usuario_gestor_fim_nome=nomes.get(processo.usuario_gestor_fim_id),
+            delegado=bool(processo.usuario_gestor_inicio_id or processo.usuario_gestor_fim_id),
         )
     return situacoes
 
@@ -314,6 +376,11 @@ def _situacoes_da_pagina(
 # empurrado pelo coordenador, não puxado de uma fila aberta.
 PERMISSAO_ATRIBUIR = "expedicao.atribuir"
 
+# Quem tem esta permissão inicia e finaliza uma etapa NO NOME do operador
+# atribuído. Separada de PERMISSAO_ATRIBUIR de propósito: distribuir trabalho e
+# executar por outra pessoa são coisas diferentes.
+PERMISSAO_DELEGAR = "expedicao.delegar"
+
 # A permissão de executar cada etapa, usada para montar o seletor de
 # responsável: não se atribui separação a quem não pode separar.
 _PERMISSAO_EXECUTAR = {
@@ -327,6 +394,21 @@ def pode_atribuir(ctx_permissoes) -> bool:
     trabalho. Fica aqui, e não no router, porque a mesma resposta decide duas
     coisas: se o POST é aceito e o que o GET devolve."""
     return any(permissao.chave == PERMISSAO_ATRIBUIR for permissao in ctx_permissoes)
+
+
+def _atribuicao_viva(
+    sessao_db: Session, tipo: TipoProcesso, pedido_id: str
+) -> ExpedicaoAtribuicao | None:
+    """O responsável designado por uma etapa de um pedido, ou None."""
+    return (
+        sessao_db.query(ExpedicaoAtribuicao)
+        .filter(
+            ExpedicaoAtribuicao.pedido_id == pedido_id,
+            ExpedicaoAtribuicao.tipo == tipo,
+            ExpedicaoAtribuicao.sync_deleted_at.is_(None),
+        )
+        .first()
+    )
 
 
 def _atribuicoes_vivas(sessao_db: Session, pedido_ids: list[str]) -> dict[tuple[str, str], ExpedicaoAtribuicao]:
@@ -497,6 +579,45 @@ def _recorte_da_situacao(sessao_db: Session, situacao: str) -> _Recorte:
     if situacao == "divergentes":
         return _Recorte(incluir=[_pedidos_com_divergencia(sessao_db)], excluir=[])
     return _Recorte(incluir=[], excluir=[])
+
+
+def _aplicar_recorte(ids_base: set[str], recorte: _Recorte) -> set[str]:
+    """O mesmo recorte que a listagem aplica, mas em cima de um conjunto de ids
+    já em memória — é assim que os contadores por situação saem sem repetir a
+    consulta paginada uma vez por aba."""
+    resultado = ids_base
+    for conjunto in recorte.incluir:
+        resultado = resultado & set(conjunto)
+    if recorte.excluir:
+        resultado = resultado - set(recorte.excluir)
+    return resultado
+
+
+def _contagens_por_situacao(sessao_db: Session, ids_base: list[str]) -> dict[str, int]:
+    """Quantos pedidos caem em cada situação, NO PERÍODO.
+
+    Os contadores respondem "quanto tem no galpão hoje", e por isso levam em
+    conta **apenas o período** — nem termo, nem status do ERP, nem empresa, nem
+    operador, nem a situação escolhida. Assim eles não mudam enquanto a pessoa
+    mexe nos filtros, e servem de painel fixo: o coordenador olha e sabe que há
+    12 pedidos parados e 3 em conferência naquele intervalo, independente do que
+    ele esteja procurando na lista.
+
+    A ÚNICA coisa fora o período que entra é a **visibilidade por atribuição**,
+    e ela entra porque não é filtro: é regra de acesso. Contar pedido que a
+    pessoa não pode ver entregaria, no número, exatamente o que a lista esconde.
+
+    Derivado de `_recorte_da_situacao`, o mesmo que o filtro usa. Reaproveitar em
+    vez de reescrever a regra em SQL de contagem é deliberado: seriam duas
+    definições da mesma coisa, e elas divergiriam em silêncio no dia em que
+    alguém mexesse numa só — o número da aba deixaria de bater com a lista que
+    ela abre.
+    """
+    conjunto_base = set(ids_base)
+    return {
+        situacao: len(_aplicar_recorte(conjunto_base, _recorte_da_situacao(sessao_db, situacao)))
+        for situacao in SITUACOES_VALIDAS
+    }
 
 
 # Empresa sem cadastro vivo na página: acontece com pedido cuja empresa foi
@@ -677,39 +798,74 @@ def listar_pedidos(
     # interseção de todos é o que sobra. Visibilidade e filtros entram na mesma
     # lista de propósito: são a mesma operação, e combiná-los num só lugar evita
     # a ordem de aplicação virar regra escondida.
-    conjuntos_obrigatorios: list[list[str]] = []
-    ids_excluidos: list[str] = []
+    if situacao and situacao != "todos" and situacao not in SITUACOES_VALIDAS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Situação inválida. Use uma destas: {', '.join(SITUACOES_VALIDAS)}.",
+        )
 
+    # A visibilidade fica separada dos filtros porque ela NÃO é um filtro: é
+    # regra de acesso. Os contadores ignoram os filtros da tela, mas não podem
+    # ignorar isto — contar pedido que a pessoa não pode ver vazaria, no número,
+    # exatamente o que a lista esconde.
+    conjuntos_visibilidade: list[list[str]] = []
     if not ver_tudo:
-        conjuntos_obrigatorios.append(
+        conjuntos_visibilidade.append(
             _pedidos_atribuidos_a(sessao_db, usuario_id) if usuario_id else []
         )
+
+    conjuntos_obrigatorios: list[list[str]] = list(conjuntos_visibilidade)
+    ids_excluidos: list[str] = []
 
     if operador_id:
         conjuntos_obrigatorios.append(_pedidos_do_operador(sessao_db, operador_id))
 
     if situacao and situacao != "todos":
-        if situacao not in SITUACOES_VALIDAS:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Situação inválida. Use uma destas: {', '.join(SITUACOES_VALIDAS)}.",
-            )
         recorte = _recorte_da_situacao(sessao_db, situacao)
         conjuntos_obrigatorios.extend(recorte.incluir)
         ids_excluidos.extend(recorte.excluir)
 
-    pedido_ids_visiveis: list[str] | None = None
-    if conjuntos_obrigatorios:
-        interseccao = set(conjuntos_obrigatorios[0])
-        for conjunto in conjuntos_obrigatorios[1:]:
-            interseccao &= set(conjunto)
-        pedido_ids_visiveis = list(interseccao)
+    def _interseccao(conjuntos: list[list[str]]) -> list[str] | None:
+        if not conjuntos:
+            return None
+        resultado = set(conjuntos[0])
+        for conjunto in conjuntos[1:]:
+            resultado &= set(conjunto)
+        return list(resultado)
+
+    # Contadores do PERÍODO inteiro: sem termo, sem status do ERP, sem empresa,
+    # sem operador e sem a situação escolhida. Só o período e a visibilidade.
+    contagens = _contagens_por_situacao(
+        sessao_db,
+        pedido_publico.listar_ids_para_expedicao(
+            sessao_db,
+            data_inicio,
+            data_fim,
+            termo=None,
+            status_chaves=None,
+            ids_permitidos=_interseccao(conjuntos_visibilidade),
+            ids_excluidos=None,
+            empresa_id=None,
+        ),
+    )
+
+    pedido_ids_visiveis = _interseccao(conjuntos_obrigatorios)
+    if pedido_ids_visiveis is not None:
         if not pedido_ids_visiveis:
             # Nenhum pedido atende: a lista é vazia, e nem vale ir ao banco de
             # pedidos. Vale tanto para "nada atribuído a mim" quanto para um
             # filtro que não casou com nada.
             return PedidoExpedicaoListaPaginadaSchema(
-                items=[], total=0, page=page, per_page=per_page, sort=sort, sort_type=sort_type
+                items=[],
+                total=0,
+                page=page,
+                per_page=per_page,
+                sort=sort,
+                sort_type=sort_type,
+                # Os contadores vão mesmo com a lista vazia: é justamente aí que
+                # o usuário precisa deles, para ver em qual aba estão os pedidos
+                # que ele está procurando.
+                contagens_por_situacao=contagens,
             )
 
     try:
@@ -738,6 +894,22 @@ def listar_pedidos(
     cidades = cliente_publico.obter_cidades(sessao_db, [pedido.cliente_id for pedido in pedidos])
     empresas = empresa_publico.obter_resumos(sessao_db, [pedido.empresa_id for pedido in pedidos])
     status_expedicao = _mapa_status(sessao_db, [pedido.id for pedido in pedidos])
+    # Endereçamento da página inteira em bloco — a listagem precisa dele porque
+    # `pode_iniciar` já embute a consistência, e o coordenador tem que ver na
+    # fila qual pedido está travado sem abrir um por um.
+    produtos_da_pagina = produto_publico.obter_para_expedicao(
+        sessao_db,
+        [item.produto_id for pedido in pedidos for item in pedido.itens],
+    )
+    enderecamento = _enderecamento_dos_pedidos(sessao_db, pedidos, produtos_da_pagina)
+    bloqueios = {
+        pedido.id: _bloqueio_do_pedido(
+            pedido,
+            enderecamento,
+            pedido.id in separacoes and separacoes[pedido.id].status == "finalizada",
+        )
+        for pedido in pedidos
+    }
     atribuicoes = _atribuicoes_vivas(sessao_db, [pedido.id for pedido in pedidos])
     # Nomes de responsável e de quem atribuiu, numa consulta só para a página.
     nomes = usuario_publico.obter_nomes(
@@ -752,7 +924,11 @@ def listar_pedidos(
             sistema_origem_id=pedido.sistema_origem_id,
             data_pedido=pedido.data_pedido,
             status_pedido=pedido.status_chave,
-            pode_iniciar=pedido_publico.pode_iniciar_expedicao(pedido.status_chave),
+            pode_iniciar=(
+                pedido_publico.pode_iniciar_expedicao(pedido.status_chave)
+                and bloqueios[pedido.id] is None
+            ),
+            bloqueio_enderecamento=bloqueios[pedido.id],
             cliente_nome_fantasia=pedido.cliente_nome_fantasia,
             cliente_cnpj=pedido.cliente_cnpj,
             cliente_cidade_nome=cidades[pedido.cliente_id].nome if pedido.cliente_id in cidades else "",
@@ -783,6 +959,7 @@ def listar_pedidos(
         per_page=per_page,
         sort=sort,
         sort_type=sort_type.lower(),
+        contagens_por_situacao=contagens,
     )
 
 
@@ -817,6 +994,171 @@ def _produtos_do_pedido(
     )
 
 
+# --------------------------------------------------------------------------
+# Consistência do endereçamento
+#
+# Antes de deixar o operador começar, a expedição confere se o que está
+# endereçado no galpão sustenta o que o pedido pede. Duas regras, e as duas
+# barram o pedido INTEIRO — não só o item com problema.
+#
+# **Por que o pedido inteiro.** Separação é uma viagem só pelo galpão, com uma
+# caixa só. Liberar os itens bons e deixar um pendurado significa que alguém vai
+# ter que voltar depois para terminar o mesmo pedido — e, no meio disso, o
+# pedido fica num estado que não é "separado" nem "não separado". É mais barato
+# resolver o endereçamento antes do que remendar depois.
+# --------------------------------------------------------------------------
+@dataclass(frozen=True)
+class _Enderecamento:
+    """O estado de endereçamento de UM item do pedido."""
+
+    enderecos: list[EnderecoItemSchema]
+    quantidade_enderecada: Decimal
+    # None = consistente. Preenchido = a frase que a tela mostra no quadro
+    # vermelho e que o 409 devolve quando alguém tenta iniciar assim mesmo.
+    bloqueio: str | None
+
+
+_SEM_ENDERECAMENTO = _Enderecamento(
+    enderecos=[], quantidade_enderecada=Decimal(0), bloqueio=None
+)
+
+
+def _bloqueio_do_item(
+    item, enderecos: list[EnderecoItemSchema], enderecada: Decimal, multipla_venda: int
+) -> str | None:
+    """As duas regras de consistência, na ordem em que o operador as entende.
+
+    1. **Saldo endereçado suficiente** (`soma >= pedido`). É `>=`, não `==`: o
+       endereço guarda o estoque inteiro do lote, não uma reserva do pedido, e
+       exigir igualdade reprovaria o caso normal de ter mais mercadoria na
+       prateleira do que o cliente comprou.
+
+    2. **Cada endereço fecha em múltiplo da embalagem de venda.** Produto que só
+       se vende em caixa de 12 não pode ter 7 unidades soltas num endereço: o
+       operador bipa a caixa, cada bipe vale 12, e ele nunca conseguiria fechar
+       aquele endereço. Um saldo assim é erro de cadastro ou sobra de uma baixa
+       manual, e é melhor descobrir agora do que com o operador na frente da
+       prateleira.
+    """
+    if enderecada < Decimal(item.quantidade):
+        return (
+            f"Endereçamento insuficiente: os endereços somam {_texto_quantidade(enderecada)} "
+            f"e o pedido precisa de {item.quantidade}."
+        )
+
+    if multipla_venda > 1:
+        quebrados = [
+            endereco
+            for endereco in enderecos
+            if Decimal(str(endereco.quantidade)) % multipla_venda != 0
+        ]
+        if quebrados:
+            primeiro = quebrados[0]
+            return (
+                f"Endereço {primeiro.descricao} tem "
+                f"{_texto_quantidade(Decimal(str(primeiro.quantidade)))}, que não fecha "
+                f"em múltiplo de {multipla_venda} (embalagem de venda do produto)."
+            )
+
+    return None
+
+
+def _texto_quantidade(valor: Decimal) -> str:
+    """Quantidade sem casas decimais quando ela é inteira — o galpão fala '3',
+    não '3.000'."""
+    normalizado = Decimal(valor).normalize()
+    return str(normalizado.quantize(Decimal(1)) if normalizado == normalizado.to_integral() else normalizado)
+
+
+def _enderecamento_dos_pedidos(
+    sessao_db: Session,
+    pedidos: list[pedido_publico.PedidoResumo],
+    produtos: dict[str, produto_publico.ProdutoExpedicao],
+) -> dict[str, _Enderecamento]:
+    """pedido_item_id -> endereços daquele lote, com quantidade e bloqueio.
+
+    Consulta em lote para a página inteira, não por item: os pares
+    (produto, lote) são agrupados por empresa — lote é por empresa, então
+    `estoque_publico` precisa de uma chamada por empresa — e os endereços de
+    todos os lotes saem de uma consulta só.
+    """
+    if not pedidos:
+        return {}
+
+    pares_por_empresa: dict[str, set[tuple[str, str]]] = {}
+    for pedido in pedidos:
+        for item in pedido.itens:
+            if item.lote:
+                pares_por_empresa.setdefault(pedido.empresa_id, set()).add(
+                    (item.produto_id, item.lote)
+                )
+
+    ids_de_lote: dict[tuple[str, str, str], str] = {}
+    for empresa_id, pares in pares_por_empresa.items():
+        for chave, lote_id in estoque_publico.obter_ids_de_lotes(
+            sessao_db, empresa_id, list(pares)
+        ).items():
+            ids_de_lote[(empresa_id, *chave)] = lote_id
+
+    por_lote = enderecamento_publico.obter_enderecos_por_lote(
+        sessao_db, list(ids_de_lote.values())
+    )
+
+    resultado: dict[str, _Enderecamento] = {}
+    for pedido in pedidos:
+        for item in pedido.itens:
+            lote_id = ids_de_lote.get((pedido.empresa_id, item.produto_id, item.lote))
+            enderecos = [
+                EnderecoItemSchema(
+                    endereco_id=linha.endereco_id,
+                    descricao=linha.descricao,
+                    quantidade=float(linha.quantidade),
+                )
+                for linha in por_lote.get(lote_id, [])
+            ]
+            enderecada = sum(
+                (Decimal(str(endereco.quantidade)) for endereco in enderecos), Decimal(0)
+            )
+            produto = produtos.get(item.produto_id, _PRODUTO_PADRAO)
+            resultado[item.id] = _Enderecamento(
+                enderecos=enderecos,
+                quantidade_enderecada=enderecada,
+                bloqueio=_bloqueio_do_item(
+                    item, enderecos, enderecada, produto.quantidade_multipla_venda
+                ),
+            )
+    return resultado
+
+
+def _bloqueio_do_pedido(
+    pedido: pedido_publico.PedidoResumo,
+    enderecamento: dict[str, _Enderecamento],
+    separacao_finalizada: bool = False,
+) -> str | None:
+    """A primeira pendência de endereçamento do pedido, ou None se está tudo em
+    ordem. Basta um item para travar o pedido — ver o comentário do bloco.
+
+    **Depois que a separação fecha, a regra deixa de valer.** A mercadoria já
+    saiu da prateleira (foi esta função que autorizou, e o fechamento baixou o
+    saldo), então o endereço está legitimamente vazio. Sem esta saída, a
+    conferência do próprio pedido que acabou de ser separado seria recusada por
+    "endereçamento insuficiente" — o sistema barrando a consequência do que ele
+    mesmo fez.
+    """
+    if separacao_finalizada:
+        return None
+    for item in pedido.itens:
+        bloqueio = enderecamento.get(item.id, _SEM_ENDERECAMENTO).bloqueio
+        if bloqueio:
+            return f"{item.produto_codigo} — {bloqueio}"
+    return None
+
+
+def _separacao_finalizada(sessao_db: Session, pedido_id: str) -> bool:
+    processo = _processo_vivo(sessao_db, "separacao", pedido_id)
+    return processo is not None and processo.status == "finalizada"
+
+
 # Usado quando o produto do item não tem mais cadastro vivo — a expedição do
 # pedido não pode parar por causa disso.
 _PRODUTO_PADRAO = produto_publico.ProdutoExpedicao(
@@ -838,6 +1180,7 @@ def _item_do_pedido(
     produto: produto_publico.ProdutoExpedicao,
     separacao: tuple[str, int],
     conferencia: tuple[str, int],
+    enderecamento: "_Enderecamento",
 ) -> ItemPedidoExpedicaoSchema:
     return ItemPedidoExpedicaoSchema(
         pedido_item_id=item.id,
@@ -848,7 +1191,9 @@ def _item_do_pedido(
         produto_codigo_barra_notas=produto.codigo_barra_notas,
         produto_codigos_barras_logistica=list(produto.codigos_barras_logistica),
         produto_dun_14=produto.dun_14,
-        endereco_produto=item.endereco_produto,
+        enderecos=enderecamento.enderecos,
+        quantidade_enderecada=float(enderecamento.quantidade_enderecada),
+        bloqueio=enderecamento.bloqueio,
         lote=item.lote,
         quantidade=item.quantidade,
         quantidade_multipla_venda=produto.quantidade_multipla_venda,
@@ -864,6 +1209,7 @@ def _item_do_processo(
     item_pedido,
     produto: produto_publico.ProdutoExpedicao,
     configuracao,
+    enderecamento: "_Enderecamento",
 ) -> ItemProcessoRespostaSchema:
     return ItemProcessoRespostaSchema(
         pedido_item_id=item.pedido_item_id,
@@ -875,7 +1221,9 @@ def _item_do_processo(
         produto_codigo_barra_notas=produto.codigo_barra_notas,
         produto_codigos_barras_logistica=list(produto.codigos_barras_logistica),
         produto_dun_14=produto.dun_14,
-        endereco_produto=item_pedido.endereco_produto,
+        enderecos=enderecamento.enderecos,
+        quantidade_enderecada=float(enderecamento.quantidade_enderecada),
+        bloqueio=enderecamento.bloqueio,
         lote=item_pedido.lote,
         quantidade_pedida=item_pedido.quantidade,
         quantidade_processada=_quantidade(item, configuracao),
@@ -891,8 +1239,9 @@ def obter_pedido(sessao_db: Session, pedido_id: str) -> PedidoExpedicaoDetalheSc
     pedido = _obter_pedido(sessao_db, pedido_id)
     cliente = cliente_publico.obter_resumo(sessao_db, pedido.cliente_id)
 
-    separacao = _situacao(sessao_db, "separacao", pedido.id, len(pedido.itens))
-    conferencia = _situacao(sessao_db, "conferencia", pedido.id, len(pedido.itens))
+    ids_do_pedido = {item.id for item in pedido.itens}
+    separacao = _situacao(sessao_db, "separacao", pedido.id, ids_do_pedido)
+    conferencia = _situacao(sessao_db, "conferencia", pedido.id, ids_do_pedido)
     atribuicoes = _atribuicoes_vivas(sessao_db, [pedido.id])
     nomes_atribuicao = usuario_publico.obter_nomes(
         sessao_db,
@@ -902,6 +1251,10 @@ def obter_pedido(sessao_db: Session, pedido_id: str) -> PedidoExpedicaoDetalheSc
     itens_separacao = _mapa_itens_processados(sessao_db, "separacao", pedido.id)
     itens_conferencia = _mapa_itens_processados(sessao_db, "conferencia", pedido.id)
     produtos = _produtos_do_pedido(sessao_db, pedido)
+    enderecamento = _enderecamento_dos_pedidos(sessao_db, [pedido], produtos)
+    bloqueio_enderecamento = _bloqueio_do_pedido(
+        pedido, enderecamento, _separacao_finalizada(sessao_db, pedido.id)
+    )
 
     # Separação primeiro, sempre. A conferência só é oferecida quando a
     # separação fechou — é a mesma regra que `iniciar_processo` aplica, aqui
@@ -919,7 +1272,13 @@ def obter_pedido(sessao_db: Session, pedido_id: str) -> PedidoExpedicaoDetalheSc
         sistema_origem_id=pedido.sistema_origem_id,
         data_pedido=pedido.data_pedido,
         status_pedido=pedido.status_chave,
-        pode_iniciar=pedido_publico.pode_iniciar_expedicao(pedido.status_chave),
+        # As duas barreiras juntas: status do ERP E endereçamento consistente.
+        pode_iniciar=(
+            pedido_publico.pode_iniciar_expedicao(pedido.status_chave)
+            and bloqueio_enderecamento is None
+        ),
+        bloqueio_enderecamento=bloqueio_enderecamento,
+        status_permite_iniciar=pedido_publico.pode_iniciar_expedicao(pedido.status_chave),
         observacoes=pedido.observacoes,
         vendedor_nome=(
             usuario_publico.obter_nome(sessao_db, pedido.vendedor_id) if pedido.vendedor_id else None
@@ -954,10 +1313,17 @@ def obter_pedido(sessao_db: Session, pedido_id: str) -> PedidoExpedicaoDetalheSc
                 produtos.get(item.produto_id, _PRODUTO_PADRAO),
                 itens_separacao.get(item.id, ("pendente", 0)),
                 itens_conferencia.get(item.id, ("pendente", 0)),
+                enderecamento.get(item.id, _SEM_ENDERECAMENTO),
             )
             for item in pedido.itens
         ],
     )
+
+
+def _nome_gestor(sessao_db: Session, gestor_id: str | None) -> str | None:
+    """Nulo é o caso normal (o operador executou sozinho) — sem o guarda, cada
+    resposta faria uma consulta a mais só para receber None de volta."""
+    return usuario_publico.obter_nome(sessao_db, gestor_id) if gestor_id else None
 
 
 def _para_resposta_processo(
@@ -966,6 +1332,7 @@ def _para_resposta_processo(
     configuracao = _config(tipo)
     itens_pedido = {item.id: item for item in pedido.itens}
     produtos = _produtos_do_pedido(sessao_db, pedido)
+    enderecamento = _enderecamento_dos_pedidos(sessao_db, [pedido], produtos)
     return ProcessoRespostaSchema(
         id=processo.id,
         tipo=tipo,
@@ -975,6 +1342,8 @@ def _para_resposta_processo(
         usuario_inicio_id=processo.usuario_inicio_id,
         usuario_inicio_nome=usuario_publico.obter_nome(sessao_db, processo.usuario_inicio_id),
         usuario_fim_id=processo.usuario_fim_id,
+        usuario_gestor_inicio_nome=_nome_gestor(sessao_db, processo.usuario_gestor_inicio_id),
+        usuario_gestor_fim_nome=_nome_gestor(sessao_db, processo.usuario_gestor_fim_id),
         data_inicio=processo.data_inicio,
         data_fim=processo.data_fim,
         itens=[
@@ -983,6 +1352,7 @@ def _para_resposta_processo(
                 itens_pedido[item.pedido_item_id],
                 produtos.get(itens_pedido[item.pedido_item_id].produto_id, _PRODUTO_PADRAO),
                 configuracao,
+                enderecamento.get(item.pedido_item_id, _SEM_ENDERECAMENTO),
             )
             for item in processo.itens
             if item.sync_deleted_at is None and item.pedido_item_id in itens_pedido
@@ -1082,17 +1452,25 @@ def iniciar_processo(
             ),
         )
 
+    # O `podeIniciar` da tela esconde o botão, mas quem barra de fato é aqui —
+    # o front é UX, o backend é a barreira (ver ARCHITECTURE.md → "Toda
+    # permissão é checada no backend, sempre"; a ideia vale para regra de
+    # negócio também).
+    produtos = _produtos_do_pedido(sessao_db, pedido)
+    bloqueio = _bloqueio_do_pedido(
+        pedido,
+        _enderecamento_dos_pedidos(sessao_db, [pedido], produtos),
+        _separacao_finalizada(sessao_db, pedido_id),
+    )
+    if bloqueio is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Endereçamento inconsistente, o pedido não pode ser iniciado. {bloqueio}",
+        )
+
     # A atribuição só vale alguma coisa se ela barrar de fato: sem isto, quem
     # souber a URL abre um pedido designado a outra pessoa.
-    atribuicao = (
-        sessao_db.query(ExpedicaoAtribuicao)
-        .filter(
-            ExpedicaoAtribuicao.pedido_id == pedido_id,
-            ExpedicaoAtribuicao.tipo == tipo,
-            ExpedicaoAtribuicao.sync_deleted_at.is_(None),
-        )
-        .first()
-    )
+    atribuicao = _atribuicao_viva(sessao_db, tipo, pedido_id)
     if atribuicao is not None and atribuicao.usuario_id != usuario_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1260,6 +1638,65 @@ def bipar(
     return _para_resposta_processo(sessao_db, tipo, processo, pedido)
 
 
+def _baixar_do_enderecamento(
+    sessao_db: Session,
+    tipo: TipoProcesso,
+    processo,
+    pedido,
+    liberar_enderecamento: bool = False,
+) -> None:
+    """Tira do endereço o que foi separado. Chamada quando o processo FECHA.
+
+    **Só na separação.** É nela que a mercadoria sai fisicamente da prateleira;
+    a conferência mexe no que já está na caixa. Baixar nas duas descontaria o
+    mesmo produto duas vezes do galpão.
+
+    **Escrita em domínio alheio, pela borda.** Quem é dono do saldo de endereço
+    é o `enderecamento` — a expedição pede a baixa por
+    `enderecamento_publico.baixar_lote`, que não dá `commit()`. A baixa e a
+    finalização ficam na MESMA transação: se qualquer coisa falhar depois, o
+    `rollback` desfaz as duas juntas e o saldo do galpão não fica errado. Ver
+    ARCHITECTURE.md → "Escrita pela borda".
+
+    Item sem lote é pulado: sem lote não há linha em `estoque_lotes` de onde
+    baixar. Hoje isso não acontece (a consistência de endereçamento barraria o
+    pedido antes), mas pular é mais seguro que estourar no fechamento de um
+    processo que o operador já terminou.
+
+    `liberar_enderecamento` só é `True` quando quem fechou a etapa tem
+    `expedicao.enderecamento.liberar` — é a etapa aberta pela exceção de
+    emergência, e o endereço não tem o saldo que a baixa pede justamente porque
+    ele estava errado. Nesse caso o `enderecamento` zera o que havia em vez de
+    recusar; ver `enderecamento_publico.baixar_lote`.
+    """
+    if tipo != "separacao":
+        return
+
+    configuracao = _config(tipo)
+    itens_pedido = {item.id: item for item in pedido.itens}
+    pares = [(item.produto_id, item.lote) for item in pedido.itens if item.lote]
+    ids_de_lote = estoque_publico.obter_ids_de_lotes(sessao_db, pedido.empresa_id, pares)
+
+    for linha in processo.itens:
+        if linha.sync_deleted_at is not None:
+            continue
+        item = itens_pedido.get(linha.pedido_item_id)
+        if item is None or not item.lote:
+            continue
+
+        quantidade = Decimal(_quantidade(linha, configuracao))
+        if quantidade <= 0:
+            continue
+
+        lote_id = ids_de_lote.get((item.produto_id, item.lote))
+        if lote_id is None:
+            continue
+
+        enderecamento_publico.baixar_lote(
+            sessao_db, lote_id, quantidade, permitir_saldo_insuficiente=liberar_enderecamento
+        )
+
+
 def finalizar_item(
     sessao_db: Session,
     tipo: TipoProcesso,
@@ -1302,13 +1739,219 @@ def finalizar_item(
     item.data_fim = _agora()
     incrementar_versao(item)
 
-    itens_vivos = [linha for linha in processo.itens if linha.sync_deleted_at is None]
+    itens_vivos = _linhas_que_contam(processo, {linha.id for linha in pedido.itens})
     if all(linha.data_fim is not None for linha in itens_vivos):
         processo.status = "finalizada"
         processo.data_fim = _agora()
         processo.usuario_fim_id = usuario_id
         incrementar_versao(processo)
         _gravar_status(sessao_db, processo.pedido_id, _STATUS_AO_FINALIZAR[tipo])
+        _baixar_do_enderecamento(sessao_db, tipo, processo, pedido)
+
+    sessao_db.commit()
+    sessao_db.refresh(processo)
+    return _para_resposta_processo(sessao_db, tipo, processo, pedido)
+
+
+# ---------------------------------------------------------------------------
+# Execução delegada: o gerente executa a etapa NO NOME do operador atribuído
+#
+# O galpão não tem coletor para todo mundo. O gerente designa uma pessoa, ela
+# separa no papel e avisa quando termina; o gerente registra o início e o fim
+# aqui. Por isso as duas funções abaixo não bipam nada — não há leitura para
+# registrar, e fingir que houve seria pior que assumir o que de fato aconteceu.
+#
+# Em ambas, `usuario_inicio_id`/`usuario_fim_id` recebem o OPERADOR (de quem é o
+# trabalho) e as colunas `usuario_gestor_*` recebem quem clicou. É esse par que
+# faz o relatório futuro sair com as duas pessoas.
+#
+# Nenhuma delas pede senha de gerente, ao contrário de `resetar` e do fecho com
+# falta em `finalizar_item`. Lá a senha existe porque quem está na tela é o
+# operador, e a credencial é a única prova de que um gerente autorizou. Aqui
+# quem está logado JÁ é o gerente, com `expedicao.delegar` checada no endpoint —
+# pedir senha seria pedir que ele prove ser ele mesmo.
+# ---------------------------------------------------------------------------
+
+
+def _operador_da_etapa(sessao_db: Session, tipo: TipoProcesso, pedido_id: str, quem_clicou: str) -> str:
+    """De quem é o TRABALHO desta etapa.
+
+    Com responsável atribuído, é ele — o gerente está executando em nome dele,
+    que é o caso que a execução delegada existe para resolver.
+
+    **Sem responsável, é quem clicou.** Antes isso era um 409 pedindo para
+    atribuir alguém primeiro, e a exigência não se sustentava: o pedido sem
+    responsável não é "de ninguém", é de quem resolveu pegá-lo. Obrigar a passar
+    pela atribuição para começar um pedido que a própria pessoa vai fazer era
+    cerimônia sem dono — e o gerente acabava atribuindo a si mesmo só para
+    liberar o botão, o que registra a mesma coisa com um passo a mais.
+    """
+    atribuicao = _atribuicao_viva(sessao_db, tipo, pedido_id)
+    return atribuicao.usuario_id if atribuicao is not None else quem_clicou
+
+
+def _gestor_ou_nulo(quem_clicou: str, operador_id: str) -> str | None:
+    """O campo de gestor só é preenchido quando quem clicou NÃO é o operador.
+
+    É o que dá sentido à coluna: ela responde "quem clicou, quando não foi o
+    próprio operador". Gravar o gerente ali quando ele é o operador diria que
+    ele executou em nome de si mesmo, e o relatório de produtividade contaria
+    a mesma pessoa duas vezes.
+    """
+    return quem_clicou if quem_clicou != operador_id else None
+
+
+def iniciar_delegado(
+    sessao_db: Session,
+    tipo: TipoProcesso,
+    pedido_id: str,
+    gestor_id: str,
+    liberar_enderecamento: bool = False,
+) -> ProcessoRespostaSchema:
+    """Abre a etapa com todos os itens iniciados, creditada ao operador
+    atribuído — ou a quem clicou, quando não há responsável designado.
+
+    Todos de uma vez, e não um a um: quem vai andar pelo galpão é o operador,
+    com a lista na mão. A trava de "um item em andamento por vez" existe para
+    medir o tempo POR ITEM na bipagem — aqui não há bipagem, e aplicá-la
+    obrigaria o gerente a dar um clique por linha sem medir nada.
+
+    `liberar_enderecamento` é a exceção de emergência (permissão
+    `expedicao.enderecamento.liberar`, checada no router): com ela, a
+    inconsistência de endereçamento deixa de barrar a abertura. **O status do
+    ERP continua barrando** — ele não é problema do galpão, e nada que se faça
+    daqui o resolve.
+    """
+    configuracao = _config(tipo)
+    pedido = _obter_pedido(sessao_db, pedido_id)
+
+    if not pedido_publico.pode_iniciar_expedicao(pedido.status_chave):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Pedido no status '{pedido.status_chave}' não pode ir para a expedição — "
+                f"só status '{pedido_publico.STATUS_LIBERADO_PARA_EXPEDICAO}'."
+            ),
+        )
+
+    # Mesma barreira de `iniciar_processo` — o botão delegado é outro caminho
+    # para a mesma etapa, e um caminho que não checasse seria o buraco por onde
+    # a regra some. A diferença é só quem pode atravessá-la.
+    if not liberar_enderecamento:
+        produtos = _produtos_do_pedido(sessao_db, pedido)
+        bloqueio = _bloqueio_do_pedido(
+            pedido,
+            _enderecamento_dos_pedidos(sessao_db, [pedido], produtos),
+            _separacao_finalizada(sessao_db, pedido_id),
+        )
+        if bloqueio is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Endereçamento inconsistente, o pedido não pode ser iniciado. {bloqueio}",
+            )
+
+    operador_id = _operador_da_etapa(sessao_db, tipo, pedido_id, gestor_id)
+
+    if tipo == "conferencia":
+        separacao = _processo_vivo(sessao_db, "separacao", pedido_id)
+        if separacao is None or separacao.status != "finalizada":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A separação deste pedido precisa ser finalizada antes da conferência.",
+            )
+
+    existente = _processo_vivo(sessao_db, tipo, pedido_id)
+    if existente is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A {configuracao.rotulo} deste pedido já foi iniciada.",
+        )
+
+    agora = _agora()
+    processo = configuracao.capa(
+        pedido_id=pedido_id,
+        usuario_inicio_id=operador_id,
+        usuario_gestor_inicio_id=_gestor_ou_nulo(gestor_id, operador_id),
+        status="em_andamento",
+        data_inicio=agora,
+        itens=[
+            configuracao.item(pedido_item_id=item.id, data_inicio=agora) for item in pedido.itens
+        ],
+    )
+    sessao_db.add(processo)
+    _gravar_status(sessao_db, pedido_id, _STATUS_AO_INICIAR[tipo])
+    sessao_db.commit()
+    sessao_db.refresh(processo)
+    return _para_resposta_processo(sessao_db, tipo, processo, pedido)
+
+
+def finalizar_delegado(
+    sessao_db: Session,
+    tipo: TipoProcesso,
+    pedido_id: str,
+    gestor_id: str,
+    liberar_enderecamento: bool = False,
+) -> ProcessoRespostaSchema:
+    """Fecha a etapa inteira no nome do operador, completando os itens abertos.
+
+    Cada item pendente fecha com a quantidade PEDIDA, sem divergência: o gerente
+    está confirmando que o operador fez o trabalho completo. Fechar com o que
+    estiver gravado marcaria tudo como divergente (ninguém bipou), e o relatório
+    de falta passaria a apontar falta que não houve.
+
+    Falta de verdade continua pelo caminho de sempre — item a item, com senha de
+    gerente em `finalizar_item`.
+
+    `liberar_enderecamento` (permissão `expedicao.enderecamento.liberar`, checada
+    no router) é o que faz a etapa aberta em emergência conseguir FECHAR: sem
+    ele, a baixa do endereço recusaria com "saldo endereçado insuficiente" e o
+    pedido ficaria preso em andamento — liberar o início sem liberar o fim não
+    destravaria faturamento nenhum.
+    """
+    configuracao = _config(tipo)
+    processo = _processo_vivo(sessao_db, tipo, pedido_id)
+    if processo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Este pedido não tem {configuracao.rotulo} em andamento.",
+        )
+    _exigir_processo_em_andamento(processo, configuracao)
+
+    # Se o responsável mudou depois da abertura, quem o gerente está creditando
+    # não é mais quem fez o trabalho. Recusar é mais honesto que gravar errado.
+    #
+    # Sem atribuição não há o que conferir: o processo já nasceu creditado a
+    # quem o abriu (ver `_operador_da_etapa`), e é esse crédito que vale.
+    atribuicao = _atribuicao_viva(sessao_db, tipo, processo.pedido_id)
+    if atribuicao is not None and atribuicao.usuario_id != processo.usuario_inicio_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Esta {configuracao.rotulo} foi aberta por outro operador. "
+                "Resete o processo antes de finalizá-lo em nome do responsável atual."
+            ),
+        )
+
+    pedido = _obter_pedido(sessao_db, processo.pedido_id)
+    quantidades_pedidas = {item.id: item.quantidade for item in pedido.itens}
+
+    agora = _agora()
+    for item in processo.itens:
+        if item.sync_deleted_at is not None or item.data_fim is not None:
+            continue
+        if item.data_inicio is None:
+            item.data_inicio = agora
+        setattr(item, configuracao.campo_quantidade, quantidades_pedidas.get(item.pedido_item_id, 0))
+        item.data_fim = agora
+        incrementar_versao(item)
+
+    processo.status = "finalizada"
+    processo.data_fim = agora
+    processo.usuario_fim_id = processo.usuario_inicio_id
+    processo.usuario_gestor_fim_id = _gestor_ou_nulo(gestor_id, processo.usuario_inicio_id)
+    incrementar_versao(processo)
+    _gravar_status(sessao_db, processo.pedido_id, _STATUS_AO_FINALIZAR[tipo])
+    _baixar_do_enderecamento(sessao_db, tipo, processo, pedido, liberar_enderecamento)
 
     sessao_db.commit()
     sessao_db.refresh(processo)

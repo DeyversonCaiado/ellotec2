@@ -113,6 +113,29 @@ export class ExpedicaoService {
     return this.http.post<Processo>(`${ENDPOINT}/${tipo}/pedidos/${pedidoId}/iniciar`, {});
   }
 
+  /** Abre a etapa NO NOME do operador atribuído, com todos os itens iniciados.
+   *
+   *  Pelo pedido e não pelo id do processo: quem clica está na tela do pedido e
+   *  ainda não existe processo nenhum. Sem body — o operador não vai no payload,
+   *  sai da atribuição viva no backend, que é a fonte da verdade de quem é o
+   *  responsável (deixar a tela escolher criaria um segundo jeito de atribuir). */
+  iniciarDelegado(tipo: TipoProcesso, pedidoId: string): Observable<Processo> {
+    return this.http.post<Processo>(
+      `${ENDPOINT}/${tipo}/pedidos/${pedidoId}/iniciar-delegado`,
+      {},
+    );
+  }
+
+  /** Fecha a etapa inteira no nome do operador, completando os itens abertos
+   *  com a quantidade pedida. Sem senha de gerente: quem está logado JÁ é o
+   *  gerente, e a permissão `expedicao.delegar` foi checada no endpoint. */
+  finalizarDelegado(tipo: TipoProcesso, pedidoId: string): Observable<Processo> {
+    return this.http.post<Processo>(
+      `${ENDPOINT}/${tipo}/pedidos/${pedidoId}/finalizar-delegado`,
+      {},
+    );
+  }
+
   iniciarItem(tipo: TipoProcesso, processoId: string, pedidoItemId: string): Observable<Processo> {
     return this.http.post<Processo>(
       `${ENDPOINT}/${tipo}/${processoId}/itens/${pedidoItemId}/iniciar`,

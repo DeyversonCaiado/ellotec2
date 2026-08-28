@@ -40,7 +40,17 @@ class Pedido(Base, IdMixin, SyncMixin):
     # e o MySQL usa o prefixo à esquerda de um índice composto. O mesmo vale
     # para sistema_origem_id abaixo. Os índices avulsos que existiam custavam
     # ~64 MB sem servir a nenhuma consulta que o composto não sirva.
-    numero: Mapped[str] = mapped_column(String(20), nullable=False)
+    # NULLABLE de propósito. O número é o do ERP quando ele existe
+    # (`sistema_origem_id`), e um sequencial daqui quando o pedido nasce na tela
+    # — mas nem toda origem externa tem um número no momento em que o pedido
+    # chega. Recusar a carga por causa disso perderia o pedido inteiro por um
+    # campo que o remetente ainda vai preencher.
+    #
+    # Duas consequências que já estão tratadas: no MySQL dois NULL não colidem
+    # num índice único, então `uq_pedidos_numero_empresa_id` não barra vários
+    # pedidos sem número; e a busca por `numero ILIKE` simplesmente não casa com
+    # NULL, que é o comportamento certo.
+    numero: Mapped[str | None] = mapped_column(String(20), nullable=True)
     data_pedido: Mapped[date] = mapped_column(Date, nullable=False)
     # Quando o pedido foi liberado (ex: análise de crédito aprovada no ERP).
     # É um MILESTONE, não auditoria: marca o instante em que o pedido passou a
@@ -92,6 +102,25 @@ class Pedido(Base, IdMixin, SyncMixin):
 
 class PedidoItem(Base, IdMixin, SyncMixin):
     __tablename__ = "pedido_itens"
+    __table_args__ = (
+        # A identidade da linha do pedido. O endereço NÃO entra: ele é onde a
+        # mercadoria está guardada no nosso galpão, não o que o cliente comprou.
+        # Um lote se espalha por vários endereços de verdade, mas isso é assunto
+        # da separação — nos ERPs grandes a linha do pedido nem tem endereço.
+        #
+        # Foi a falta desta constraint que deixou entrar 90 linhas duplicadas:
+        # a consulta da integração cruzava a linha do pedido com o estoque por
+        # endereço e devolvia uma linha por endereço, cada uma carregando a
+        # quantidade INTEIRA (ver a migração c9e4a71f5b38).
+        #
+        # Buraco conhecido: no MySQL dois NULL não colidem num unique, então
+        # item sem lote escapa da constraint. Quem barra esse caso é
+        # `itens_sem_linha_duplicada` no contrato, onde None == None. Hoje não
+        # existe nenhuma linha sem lote no banco.
+        UniqueConstraint(
+            "pedido_id", "produto_id", "lote", name="uq_pedido_itens_pedido_produto_lote"
+        ),
+    )
 
     pedido_id: Mapped[str] = mapped_column(
         ForeignKey("pedidos.id", ondelete="CASCADE"), nullable=False, index=True
@@ -104,9 +133,46 @@ class PedidoItem(Base, IdMixin, SyncMixin):
     quantidade: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     preco_unitario: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
 
-    # Disponíveis apenas via API — não exibidos nem editáveis no front hoje.
-    endereco_produto: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # O lote é do NEGÓCIO: é ele que o cliente recebe, e é ele que a
+    # rastreabilidade sanitária cobra da nota fiscal. Por isso fica aqui.
+    #
+    # O ENDEREÇO não fica, e essa é a diferença. Endereço é onde a mercadoria
+    # está guardada no nosso galpão — informação nossa, do estoque, não do que
+    # o cliente comprou. Ele mora em `estoque_enderecos` /
+    # `estoque_endereco_lote` (domínio `enderecamento`), amarrado ao LOTE, e a
+    # expedição chega nele partindo do par (produto, lote) desta linha.
+    #
+    # Havia uma coluna `endereco_produto` aqui, e ela era uma mentira de
+    # cardinalidade: um lote está em vários endereços, e espremer isso num
+    # campo só fazia a consulta da integração devolver uma linha de pedido por
+    # endereço, cada uma com a quantidade inteira. Ver a migração c9e4a71f5b38.
     lote: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Como o ERP identifica esta linha: empresa + pedido + produto. É a chave
+    # natural de lá, e são as TRÊS juntas que apontam para uma linha só —
+    # nenhuma sozinha serve, porque cada empresa/filial numera pedido de forma
+    # independente e o mesmo produto se repete em pedidos diferentes.
+    #
+    # Guardar o trio aqui (em vez de chegar na empresa e no pedido pela FK
+    # `pedido_id`) é o que permite localizar o item direto pelo que o ERP
+    # conhece, sem ter que resolver a capa antes.
+    #
+    # Note que o trio é como o ERP CHAMA esta linha, não a identidade dela aqui
+    # dentro: quem identifica a linha é `uq_pedido_itens_pedido_produto_lote`,
+    # acima. Por isso as três não têm índice próprio — nenhuma consulta parte
+    # delas hoje (abstrai por dor).
+    #
+    # Repare que NÃO existe uma coluna `sistema_origem_id` nesta tabela, ao
+    # contrário de `pedidos`, `produtos` e `empresas`. É deliberado: naquelas,
+    # o nome significa "o id da própria linha no ERP", e a linha do item não
+    # tem um id próprio de lá — ela é identificada pelo trio. Uma coluna com
+    # aquele nome guardando o código do produto faria o mesmo nome significar
+    # duas coisas diferentes no mesmo projeto.
+    #
+    # Todas nullable: item lançado pela tela não vem de sistema nenhum.
+    empresa_sistema_origem_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    pedido_sistema_origem_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    produto_sistema_origem_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     pedido: Mapped["Pedido"] = relationship(back_populates="itens")
 

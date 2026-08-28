@@ -38,6 +38,16 @@ def _exigir_execucao(ctx: ContextoRequisicao, tipo: TipoProcesso) -> None:
         )
 
 
+def _pode_liberar_enderecamento(ctx: ContextoRequisicao) -> bool:
+    """Se quem está chamando pode passar por cima da inconsistência de
+    endereçamento. Não é `exigir_permissao` porque não barra ninguém: quem não
+    tem a chave continua podendo delegar — só não atravessa o bloqueio."""
+    return any(
+        permissao.chave == "expedicao.enderecamento.liberar"
+        for permissao in ctx.usuario.permissoes
+    )
+
+
 def _mes_atual() -> tuple[date, date]:
     """Período padrão da tela: do dia 1º até hoje, sobre a data do pedido. É o
     recorte que responde 'o que é deste mês?' sem o operador digitar nada."""
@@ -238,6 +248,44 @@ def iniciar_processo(
 ) -> ProcessoRespostaSchema:
     _exigir_execucao(ctx, tipo)
     return expedicao_service.iniciar_processo(sessao_db, tipo, pedido_id, ctx.usuario.id)
+
+
+@router.post(
+    "/{tipo}/pedidos/{pedido_id}/iniciar-delegado",
+    response_model=ProcessoRespostaSchema,
+    summary="Inicia a etapa inteira em nome do operador atribuído",
+)
+def iniciar_delegado(
+    tipo: TipoProcesso,
+    pedido_id: str,
+    sessao_db: Session = Depends(obter_sessao),
+    ctx: ContextoRequisicao = Depends(exigir_permissao("expedicao.delegar")),
+) -> ProcessoRespostaSchema:
+    """Não chama `_exigir_execucao`: quem delega não executa a etapa, despacha
+    alguém que executa. Exigir dele a permissão de separar obrigaria todo
+    gerente a poder separar — o contrário do motivo de existir a delegação."""
+    return expedicao_service.iniciar_delegado(
+        sessao_db, tipo, pedido_id, ctx.usuario.id, _pode_liberar_enderecamento(ctx)
+    )
+
+
+@router.post(
+    "/{tipo}/pedidos/{pedido_id}/finalizar-delegado",
+    response_model=ProcessoRespostaSchema,
+    summary="Finaliza a etapa inteira em nome do operador atribuído",
+)
+def finalizar_delegado(
+    tipo: TipoProcesso,
+    pedido_id: str,
+    sessao_db: Session = Depends(obter_sessao),
+    ctx: ContextoRequisicao = Depends(exigir_permissao("expedicao.delegar")),
+) -> ProcessoRespostaSchema:
+    """Pelo pedido, e não pelo id do processo: quem clica está olhando a tela do
+    pedido, e um `GET` a mais só para descobrir o id do processo seria uma ida
+    ao servidor sem informação nova."""
+    return expedicao_service.finalizar_delegado(
+        sessao_db, tipo, pedido_id, ctx.usuario.id, _pode_liberar_enderecamento(ctx)
+    )
 
 
 @router.post(

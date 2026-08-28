@@ -13,7 +13,8 @@ export const routes: Routes = [
     children: [
       {
         path: '',
-        loadComponent: () => import('./core/layout/home-page/home-page').then((m) => m.HomePage),
+        loadComponent: () =>
+          import('./domains/inicio/inicio-page/inicio-page').then((m) => m.InicioPage),
       },
       {
         path: 'usuarios',
@@ -32,6 +33,11 @@ export const routes: Routes = [
         loadChildren: () => import('./domains/pedidos/pedido.routes').then((m) => m.PEDIDO_ROUTES),
       },
       {
+        path: 'notas-fiscais',
+        loadChildren: () =>
+          import('./domains/notas-fiscais/nota-fiscal.routes').then((m) => m.NOTA_FISCAL_ROUTES),
+      },
+      {
         path: 'cidades',
         loadChildren: () => import('./domains/cidades/cidade.routes').then((m) => m.CIDADE_ROUTES),
       },
@@ -40,12 +46,26 @@ export const routes: Routes = [
         loadChildren: () => import('./domains/marcas/marca.routes').then((m) => m.MARCA_ROUTES),
       },
       {
+        path: 'entregas',
+        loadChildren: () =>
+          import('./domains/entregas/entrega.routes').then((m) => m.ENTREGA_ROUTES),
+      },
+      {
         path: 'expedicao',
         loadChildren: () => import('./domains/expedicao/expedicao.routes').then((m) => m.EXPEDICAO_ROUTES),
       },
       {
         path: 'empresas',
         loadChildren: () => import('./domains/empresas/empresa.routes').then((m) => m.EMPRESA_ROUTES),
+      },
+      {
+        path: 'estoque',
+        loadChildren: () => import('./domains/estoque/estoque.routes').then((m) => m.ESTOQUE_ROUTES),
+      },
+      {
+        path: 'enderecamento',
+        loadChildren: () =>
+          import('./domains/enderecamento/enderecamento.routes').then((m) => m.ENDERECAMENTO_ROUTES),
       },
     ],
   },

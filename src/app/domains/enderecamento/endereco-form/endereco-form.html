@@ -1,0 +1,61 @@
+<div class="p-4 sm:p-6 max-w-[900px] mx-auto">
+
+  <app-page-header [titulo]="modoEdicao() ? 'Editar endereço' : 'Novo endereço'" subtitulo="Um lugar do galpão — o que está escrito na etiqueta da prateleira">
+    <a routerLink="/enderecamento" class="inline-flex items-center gap-2 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800">
+      Cancelar
+    </a>
+  </app-page-header>
+
+  <form [formGroup]="form" (ngSubmit)="salvar()" class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 sm:p-6 space-y-4">
+    @if (erro()) {
+      <div class="flex items-start gap-2 text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/40 rounded-lg p-3">
+        <app-icon name="alert" class="size-4 mt-0.5 shrink-0" />
+        <span>{{ erro() }}</span>
+      </div>
+    }
+
+    <div class="grid sm:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Descrição</label>
+        <input type="text" formControlName="descricao" placeholder="Ex: 07-14-08-03-01"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm font-mono placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-brand-500 focus:ring-brand-500" />
+        @if (form.controls.descricao.invalid && form.controls.descricao.touched) {
+          <p class="text-xs text-red-600 mt-1">Informe a descrição do endereço.</p>
+        }
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Empresa</label>
+        <select formControlName="empresaId"
+          class="py-2.5 px-3.5 block w-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500">
+          <option value="">Selecione...</option>
+          @for (empresa of empresas(); track empresa.id) {
+            <option [value]="empresa.id">{{ empresa.apelido || empresa.nomeFantasia }}</option>
+          }
+        </select>
+        @if (form.controls.empresaId.invalid && form.controls.empresaId.touched) {
+          <p class="text-xs text-red-600 mt-1">Selecione a empresa dona do endereço.</p>
+        }
+        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+          O mesmo código de prateleira existe em cada filial — é o par empresa + descrição que identifica o endereço.
+        </p>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-end gap-3 pt-2">
+      <a routerLink="/enderecamento" class="text-sm font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-4 py-2.5">Cancelar</a>
+      <button type="submit" [disabled]="carregando()"
+        class="inline-flex items-center gap-2 text-sm font-semibold bg-brand-600 text-white rounded-lg px-5 py-2.5 hover:bg-brand-700 disabled:opacity-60">
+        @if (carregando()) {
+          <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+          </svg>
+        } @else {
+          <app-icon name="check" class="size-4" />
+        }
+        Salvar endereço
+      </button>
+    </div>
+  </form>
+</div>

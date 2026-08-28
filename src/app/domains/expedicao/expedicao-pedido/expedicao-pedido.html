@@ -77,6 +77,17 @@
               @if (etapa.situacao.usuarioNome) {
                 <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Operador: {{ etapa.situacao.usuarioNome }}</p>
               }
+              <!-- Quem CLICOU, quando não foi o operador. Sem esta linha o selo
+                   "delegado" não teria sentido: mostraria que alguém agiu por
+                   outro sem dizer quem. -->
+              @if (etapa.situacao.usuarioGestorInicioNome) {
+                <p class="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                  Iniciada por {{ etapa.situacao.usuarioGestorInicioNome }}
+                  @if (etapa.situacao.usuarioGestorFimNome) {
+                    · finalizada por {{ etapa.situacao.usuarioGestorFimNome }}
+                  }
+                </p>
+              }
             </div>
             @if (etapa.situacao.id) {
               <ng-container *appPermissao="'expedicao.resetar'">
@@ -92,6 +103,55 @@
               </ng-container>
             }
           </div>
+
+          <!-- Execução delegada: o gerente registra o início e o fim da etapa
+               no nome de quem está separando no papel, porque não há coletor
+               para todo mundo. Os botões ficam embaixo, e não na linha do
+               Resetar, porque são a ação principal da caixa — Resetar é a
+               saída de emergência. -->
+          <ng-container *appPermissao="'expedicao.delegar'">
+            <!-- Exceção de emergência: com `expedicao.enderecamento.liberar` os
+                 botões continuam aparecendo mesmo com o endereçamento errado,
+                 para destravar o faturamento. O aviso vem junto porque quem
+                 clica precisa saber que está passando por cima de um bloqueio,
+                 e não que o bloqueio deixou de existir. -->
+            @if (liberandoEnderecamento() && etapa.situacao.status !== 'finalizada') {
+              <p class="mt-3 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                Endereçamento inconsistente — você pode liberar assim mesmo, e a
+                liberação fica registrada no seu nome.
+              </p>
+            }
+            @if (podeIniciarDelegado($any(etapa.tipo), etapa.situacao)) {
+              <button
+                type="button"
+                (click)="iniciarDelegado($any(etapa.tipo))"
+                [disabled]="delegandoInicio() === etapa.tipo"
+                [attr.data-testid]="'iniciar-delegado-' + etapa.tipo"
+                class="mt-3 w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-white bg-brand-600 rounded-lg px-3 py-2 hover:bg-brand-700 disabled:opacity-60"
+              >
+                <app-icon name="contacts" class="size-4" />
+                <!-- O nome vai no rótulo quando há responsável, e não só um
+                     "Iniciar": o rodapé desta mesma tela tem um botão de iniciar
+                     para quem vai executar. Sem o nome, os dois ficam
+                     indistinguíveis, e o gerente não veria por quem está
+                     assinando. Sem responsável não há em nome de quem — o
+                     rótulo então diz só a etapa. -->
+                {{ delegandoInicio() === etapa.tipo ? 'Iniciando...' : rotuloBotaoDelegado($any(etapa.tipo)) }}
+              </button>
+            }
+            @if (etapa.situacao.status === 'em_andamento') {
+              <button
+                type="button"
+                (click)="finalizarDelegado($any(etapa.tipo))"
+                [disabled]="delegandoFim() === etapa.tipo"
+                [attr.data-testid]="'finalizar-delegado-' + etapa.tipo"
+                class="mt-3 w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-white bg-emerald-600 rounded-lg px-3 py-2 hover:bg-emerald-700 disabled:opacity-60"
+              >
+                <app-icon name="check" class="size-4" />
+                {{ delegandoFim() === etapa.tipo ? 'Finalizando...' : 'Finalizar em nome de ' + rotuloOperadorAtribuido($any(etapa.tipo)) }}
+              </button>
+            }
+          </ng-container>
         </div>
       }
     </div>
@@ -104,10 +164,24 @@
            empilhados, em vez de uma tabela que só cabe rolando pro lado. -->
       <div class="space-y-3 min-[800px]:hidden">
         @for (item of p.itens; track item.pedidoItemId) {
-          <dl class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 space-y-2 text-sm">
+          <dl
+            class="rounded-xl p-4 space-y-2 text-sm border"
+            [class]="item.bloqueio
+              ? 'bg-red-50 dark:bg-red-950/40 border-red-300 dark:border-red-800'
+              : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800'"
+          >
+            @if (item.bloqueio) {
+              <p class="text-xs font-semibold text-red-700 dark:text-red-300">{{ item.bloqueio }}</p>
+            }
             <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
               <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Endereço</dt>
-              <dd class="font-mono text-gray-600 dark:text-gray-300">{{ item.enderecoProduto ?? '—' }}</dd>
+              <dd class="font-mono text-gray-600 dark:text-gray-300">
+                @if (item.enderecos.length) {
+                  @for (endereco of item.enderecos; track endereco.enderecoId) {
+                    <span class="block">{{ endereco.descricao }} · {{ endereco.quantidade }}</span>
+                  }
+                } @else { — }
+              </dd>
             </div>
             <div class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
               <dt class="sm:w-28 sm:shrink-0 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Qtd</dt>
@@ -177,8 +251,14 @@
           </thead>
           <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
             @for (item of p.itens; track item.pedidoItemId) {
-              <tr>
-                <td class="px-4 py-3 text-sm font-mono text-gray-600 dark:text-gray-300">{{ item.enderecoProduto ?? '—' }}</td>
+              <tr [class]="item.bloqueio ? 'bg-red-50 dark:bg-red-950/40' : ''" [title]="item.bloqueio ?? ''">
+                <td class="px-4 py-3 text-sm font-mono text-gray-600 dark:text-gray-300">
+                  @if (item.enderecos.length) {
+                    @for (endereco of item.enderecos; track endereco.enderecoId) {
+                      <span class="block">{{ endereco.descricao }} · {{ endereco.quantidade }}</span>
+                    }
+                  } @else { — }
+                </td>
                 <td class="px-4 py-3 text-sm text-end font-semibold text-gray-800 dark:text-gray-100">{{ item.quantidade }}</td>
                 <td class="px-4 py-3">
                   <p class="text-sm text-gray-700 dark:text-gray-200">{{ item.produtoDescricao }}</p>
@@ -218,7 +298,15 @@
     <!-- Barra de ação fixa no rodapé -->
     <div class="fixed inset-x-0 bottom-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 p-3 sm:p-4">
       <div class="max-w-[1100px] mx-auto">
-        @if (p.proximaEtapa && !p.podeIniciar) {
+        @if (p.proximaEtapa && p.bloqueioEnderecamento) {
+          <!-- Endereçamento vem antes do status na mensagem porque é o problema
+               que alguém AQUI resolve: conferir a prateleira e corrigir o
+               cadastro. Status é do ERP, não tem o que fazer daqui. -->
+          <p class="text-center text-sm font-semibold text-red-600 dark:text-red-400">
+            Endereçamento inconsistente — o pedido não pode ser iniciado.
+          </p>
+          <p class="text-center text-sm text-red-600 dark:text-red-400 mt-1">{{ p.bloqueioEnderecamento }}</p>
+        } @else if (p.proximaEtapa && !p.podeIniciar) {
           <!-- A trava real é do backend (409 em iniciar_processo); aqui a tela
                só evita o clique que já nasceria recusado, e diz o porquê. -->
           <p class="text-center text-sm text-gray-500 dark:text-gray-400">

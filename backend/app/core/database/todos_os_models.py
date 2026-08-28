@@ -13,6 +13,17 @@ from app.core.auth.sessao_model import Sessao  # noqa: F401
 from app.domains.cidades.cidade_model import Cidade  # noqa: F401
 from app.domains.clientes.cliente_model import Cliente  # noqa: F401
 from app.domains.empresas.empresa_model import Empresa  # noqa: F401
+from app.domains.enderecamento.enderecamento_model import (  # noqa: F401
+    EstoqueEndereco,
+    EstoqueEnderecoLote,
+)
+from app.domains.entregas.entrega_model import (  # noqa: F401
+    Entrega,
+    EntregaNota,
+    EntregaNotaInteracao,
+    EntregaNotaItem,
+)
+from app.domains.estoque.estoque_model import Estoque, EstoqueLote  # noqa: F401
 from app.domains.expedicao.expedicao_model import (  # noqa: F401
     Conferencia,
     ConferenciaItem,
@@ -22,6 +33,7 @@ from app.domains.expedicao.expedicao_model import (  # noqa: F401
     SeparacaoItem,
 )
 from app.domains.marcas.marca_model import Marca  # noqa: F401
+from app.domains.notas_fiscais.nota_fiscal_model import NotaFiscal, NotaFiscalItem  # noqa: F401
 from app.domains.pedidos.pedido_model import Pedido, PedidoItem, PedidoStatus  # noqa: F401
 from app.domains.produtos.produto_model import Produto, ProdutoCodigoBarras  # noqa: F401
 from app.domains.usuarios.cargo_model import Cargo  # noqa: F401

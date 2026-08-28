@@ -52,8 +52,10 @@ def _para_resposta(pedido: Pedido) -> PedidoRespostaSchema:
                 "produto_descricao": item.produto_descricao,
                 "quantidade": item.quantidade,
                 "preco_unitario": item.preco_unitario,
-                "endereco_produto": item.endereco_produto,
                 "lote": item.lote,
+                "empresa_sistema_origem_id": item.empresa_sistema_origem_id,
+                "pedido_sistema_origem_id": item.pedido_sistema_origem_id,
+                "produto_sistema_origem_id": item.produto_sistema_origem_id,
             }
             for item in pedido.itens
         ],

@@ -13,7 +13,7 @@ explícito, sempre com bind de parâmetro.
 from contextlib import contextmanager
 from typing import Any, Iterator
 
-from app.shared.sistema_origem.config import OracleSettings, obter_oracle_settings
+from app.shared.sistema_origem.gestcom.config import OracleSettings, obter_oracle_settings
 
 
 class OracleIndisponivel(RuntimeError):

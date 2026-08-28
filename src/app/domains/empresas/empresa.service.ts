@@ -90,7 +90,7 @@ export class EmpresaService {
 
   private dadosFicticios(): Empresa[] {
     return [
-      { id: 'emp-001', codigo: 'MATRIZ', razaoSocial: 'Ellotec Matriz Ltda', nomeFantasia: 'Ellotec', cnpj: '00.000.000/0001-00', ativo: true, criadoEm: '2025-10-01T08:00:00Z' },
+      { id: 'emp-001', codigo: 'MATRIZ', razaoSocial: 'Ellotec Matriz Ltda', nomeFantasia: 'Ellotec', apelido: 'MTZ', cnpj: '00.000.000/0001-00', ativo: true, criadoEm: '2025-10-01T08:00:00Z' },
     ];
   }
 }

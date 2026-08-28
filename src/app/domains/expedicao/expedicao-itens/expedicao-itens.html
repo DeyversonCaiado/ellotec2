@@ -45,9 +45,16 @@
               <p class="text-base font-semibold text-gray-800 dark:text-gray-100 leading-snug">{{ item.produtoDescricao }}</p>
               <p class="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5">
                 {{ item.produtoCodigo }}
-                @if (item.enderecoProduto) { · {{ item.enderecoProduto }} }
                 @if (item.lote) { · Lote {{ item.lote }} }
               </p>
+              <!-- Um endereço por linha: no coletor o operador lê "onde vou e
+                   quanto pego" de relance, e endereços emendados na mesma linha
+                   viram um borrão quando o lote está em três prateleiras. -->
+              @for (endereco of item.enderecos; track endereco.enderecoId) {
+                <p class="text-xs text-gray-600 dark:text-gray-300 font-mono mt-0.5">
+                  {{ endereco.descricao }} · {{ endereco.quantidade }}
+                </p>
+              }
               <!-- Abaixo do lote e do mesmo tamanho: continua sendo a linha de
                    identificação do produto, só que a que o operador confere
                    contra o que está impresso na caixa. -->

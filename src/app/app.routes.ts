@@ -67,6 +67,11 @@ export const routes: Routes = [
         loadChildren: () =>
           import('./domains/enderecamento/enderecamento.routes').then((m) => m.ENDERECAMENTO_ROUTES),
       },
+      {
+        path: 'cotacoes',
+        loadChildren: () =>
+          import('./domains/cotacoes/cotacao.routes').then((m) => m.COTACOES_ROUTES),
+      },
     ],
   },
   { path: '**', redirectTo: '' },

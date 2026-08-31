@@ -240,6 +240,22 @@ export const ESTRUTURA_APP: SecaoApp[] = [
         ],
       },
       {
+        titulo: 'Inteligência de Mercado',
+        modulos: [
+          {
+            // Domínio de CONSULTA a banco externo: os dados vêm do OuroWeb
+            // (SQL Server do Bionexo), somente leitura, e nada é gravado. Por
+            // isso a única ação é "acessar" — não existe incluir, editar nem
+            // apagar. Ver backend/ARCHITECTURE.md → "Domínio de consulta a
+            // banco externo".
+            rotulo: 'Cotações',
+            icone: 'chart',
+            rota: '/cotacoes',
+            acoes: [{ label: 'Acessar listagem', chave: 'cotacoes.acessar' }],
+          },
+        ],
+      },
+      {
         titulo: 'Administração',
         modulos: [
           {

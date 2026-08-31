@@ -94,6 +94,11 @@ PERMISSOES_VALIDAS: list[str] = [
     # quem responde pelo galpão. Não libera o botão do operador — só a execução
     # delegada. Ver "A exceção" em domains/expedicao/EXECUCAO_DELEGADA.md.
     "expedicao.enderecamento.liberar",
+    # --- Inteligência de Mercado / Cotações ---
+    # Domínio de CONSULTA a banco externo (OuroWeb): só existe "acessar",
+    # porque não há nada para incluir, editar ou apagar. Ver
+    # ARCHITECTURE.md → "Domínio de consulta a banco externo".
+    "cotacoes.acessar",
 ]
 
 PERMISSOES_VALIDAS_SET: frozenset[str] = frozenset(PERMISSOES_VALIDAS)

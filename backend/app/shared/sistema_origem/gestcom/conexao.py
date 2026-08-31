@@ -10,6 +10,7 @@ Diferente do MySQL, aqui não há ORM nem model: o schema é de outro sistema, n
 explícito, sempre com bind de parâmetro.
 """
 
+import platform
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -26,10 +27,15 @@ def _iniciar_client(diretorio: str) -> None:
     """Liga o modo thick. Não é opcional: o servidor do ERP é antigo demais
     para o modo thin, que recusa a conexão com DPY-3010. Sem `diretorio`, o
     caminho certo é falhar aqui com uma mensagem que aponta para o .env — e
-    não deixar o driver tentar thin e errar com outra coisa."""
+    não deixar o driver tentar thin e errar com outra coisa.
+
+    O `diretorio` normalmente vem de `settings.client_dir_efetivo`, que
+    descobre o caminho pelo sistema operacional. Ver `config.py`.
+    """
     if not diretorio:
         raise OracleIndisponivel(
-            "ELLOTEC_ORACLE_CLIENT_DIR não configurado. O Oracle do ERP exige o "
+            f"Não há Instant Client conhecido para o sistema '{platform.system()}' e "
+            "ELLOTEC_ORACLE_CLIENT_DIR não foi preenchido. O Oracle do ERP exige o "
             "Instant Client (modo thick) — o modo thin não conecta neste servidor."
         )
     import oracledb
@@ -41,7 +47,10 @@ def _iniciar_client(diretorio: str) -> None:
         # Com --reload isso acontece o tempo todo, e não é problema.
         if "already been initialized" not in str(erro).lower():
             raise OracleIndisponivel(
-                f"Não foi possível inicializar o Oracle Instant Client em '{diretorio}': {erro}"
+                f"Não foi possível inicializar o Oracle Instant Client em '{diretorio}' "
+                f"(sistema: {platform.system()}): {erro}. Se o caminho for de outro "
+                "sistema operacional, apague ELLOTEC_ORACLE_CLIENT_DIR do .env — sem "
+                "ele o diretório é descoberto pelo próprio sistema."
             ) from erro
 
 
@@ -65,7 +74,7 @@ def conectar(settings: OracleSettings | None = None) -> Iterator[Any]:
     except ImportError as erro:
         raise OracleIndisponivel("Dependência 'oracledb' não instalada.") from erro
 
-    _iniciar_client(settings.oracle_client_dir)
+    _iniciar_client(settings.client_dir_efetivo)
 
     try:
         conexao = oracledb.connect(

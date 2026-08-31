@@ -17,6 +17,7 @@ import { CommonModule } from '@angular/common';
       @switch (name) {
         @case ('layout') { <rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/> }
         @case ('activity') { <path d="M22 12h-4l-3 9L9 3l-3 9H2"/> }
+        @case ('chart') { <path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6" rx="1"/><rect x="12" y="8" width="3" height="10" rx="1"/><rect x="17" y="4" width="3" height="14" rx="1"/> }
         @case ('dollar') { <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/> }
         @case ('crypto') { <circle cx="12" cy="12" r="9"/><path d="M9.5 8h3.2a2 2 0 1 1 0 4H9.5m0 0h3.6a2 2 0 1 1 0 4H9.5M11 6v2m0 8v2"/> }
         @case ('users') { <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/> }

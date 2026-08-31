@@ -18,8 +18,8 @@ Wants=network-online.target ellotec2-api.service
 Type=exec
 User=ello
 Group=ello
-WorkingDirectory=/opt/ellotec2/backend
-ExecStart=/opt/ellotec2/backend/.venv/bin/python -m app.shared.sistema_origem.app
+WorkingDirectory=/home/ello/projetos/ellotec2/backend
+ExecStart=/home/ello/projetos/ellotec2/backend/.venv/bin/python -m app.shared.sistema_origem.app
 
 # O loop chama os.._exit(1) de propósito quando um registro de origem está
 # inválido — o dado precisa ser corrigido no ERP. Reinicia mesmo assim, com

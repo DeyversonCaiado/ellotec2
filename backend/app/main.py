@@ -12,6 +12,7 @@ from app.domains.cidades.cidade_router import router as cidade_router
 from app.domains.clientes.cliente_router import router as cliente_router
 from app.domains.empresas.empresa_router import router as empresa_router
 from app.domains.enderecamento.enderecamento_router import router as enderecamento_router
+from app.domains.cotacoes.cotacao_router import router as cotacao_router
 from app.domains.entregas.entrega_router import router as entrega_router
 from app.domains.estoque.estoque_router import router as estoque_router
 from app.domains.expedicao.expedicao_router import router as expedicao_router
@@ -72,6 +73,7 @@ app.include_router(expedicao_router)
 app.include_router(entrega_router)
 app.include_router(estoque_router)
 app.include_router(enderecamento_router)
+app.include_router(cotacao_router)
 
 
 @app.exception_handler(IntegrityError)

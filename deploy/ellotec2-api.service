@@ -19,13 +19,13 @@ Wants=network-online.target
 Type=exec
 User=ello
 Group=ello
-WorkingDirectory=/opt/ellotec2/backend
+WorkingDirectory=/home/ello/projetos/ellotec2/backend
 
 # --reload NUNCA em produção: recarrega a cada arquivo tocado e mantém um
 # processo supervisor a mais no ar sem necessidade.
 # --host 0.0.0.0 para a API responder no IP da máquina (192.168.20.12:8000),
 # não só em localhost — é assim que o front e o coletor a alcançam.
-ExecStart=/opt/ellotec2/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+ExecStart=/home/ello/projetos/ellotec2/backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Restart=always
 RestartSec=5

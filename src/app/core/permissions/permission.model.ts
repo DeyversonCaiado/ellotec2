@@ -73,7 +73,11 @@ export type PermissaoKey =
   | 'expedicao.resetar'
   | 'expedicao.atribuir'
   | 'expedicao.delegar'
-  | 'expedicao.enderecamento.liberar';
+  | 'expedicao.enderecamento.liberar'
+  // --- Inteligência de Mercado / Cotações ---
+  // Domínio de CONSULTA a banco externo (OuroWeb): só existe "acessar",
+  // porque não há nada para incluir, editar ou apagar.
+  | 'cotacoes.acessar';
 
 /** O que o usuário carrega — simples e verificável em O(1).
  * Serializado como array de strings no JSON (backend → front) e convertido

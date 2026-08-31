@@ -627,6 +627,118 @@ usem os aliases camelCase sem precisar declarar em cada endpoint.
 domínio. Sempre `ContratoBase` e `RouterBase`. O `main.py` pode usar `FastAPI`
 diretamente (não é router de domínio).
 
+## Domínio de consulta a banco externo
+
+O domínio `cotacoes/` (menu **Inteligência de Mercado**) inaugurou um padrão
+que foge do desenho normal, e a diferença é proposital: **ele não lê o nosso
+MySQL**. Todos os dados vêm do **OuroWeb**, o SQL Server do Bionexo, que é a
+base de outro sistema.
+
+### O que muda em relação a um domínio comum
+
+| Domínio comum | Domínio de consulta a banco externo |
+|---|---|
+| 4 arquivos (`_model`, `_contrato`, `_service`, `_router`) | **3 arquivos — não existe `_model.py`** |
+| tem tabela e migração Alembic | nenhuma tabela nossa, nenhuma migração |
+| service recebe `Session` do SQLAlchemy | service **não recebe sessão nenhuma** |
+| router usa `Depends(obter_sessao)` | router **não usa** `obter_sessao` |
+| chaves `acessar` + `gravar.*` + `apagar` | só **`acessar`** — não há o que gravar |
+| pode expor `_publico.py` a outros domínios | **não expõe nada**: nenhum outro domínio o consome |
+
+Não existe `cotacao_model.py` porque não há tabela nossa para mapear. Mapear o
+schema de outro sistema criaria a ilusão de que podemos alterá-lo — a mesma
+razão pela qual `sistema_origem/gestcom/` também não tem models.
+
+### Somente leitura, e isso inclui objeto temporário
+
+O acesso ao OuroWeb é **estritamente de leitura**. Não é só "não dar UPDATE":
+não criamos índice, view, procedure, tabela de apoio nem tabela temporária
+(`SELECT INTO #tmp`) no servidor deles. Quando uma consulta está lenta, a saída
+é **reescrever o SQL**.
+
+Isso está garantido no código: `shared/sistema_origem/ouroweb/conexao.py` expõe
+apenas `buscar_um()` e `buscar_todos()`, não tem equivalente do `executar()` do
+gestcom, e abre a conexão com `autocommit=False`. A ausência da função de
+escrita é intencional e não deve ser "corrigida" por conveniência.
+
+Note que os dois bancos de origem **não têm a mesma permissão**: no Oracle do
+GESTCOM a escrita existe num caso específico (a correção de código de barras
+grava em `fat_produtos`); no OuroWeb, nunca.
+
+### Isolamento: não conversa com outros domínios
+
+`cotacoes/` não importa nenhum outro domínio, e nenhum outro domínio o importa.
+A única dependência é a de sempre, `core/auth/dependencies.exigir_permissao` —
+sem ela qualquer pessoa logada acessaria a tela, e a checagem de permissão é a
+barreira real do sistema (o guard do front é só UX).
+
+Se um dia algum dado do Bionexo precisar cruzar com dado nosso, isso **não**
+vira import entre domínios: a regra continua valendo, e a saída é o
+`<dominio>_publico.py` como em qualquer outra fronteira.
+
+### Paginação é obrigatória, e no banco
+
+São cerca de **8 GB** nas tabelas do Bionexo: `Tab_CceBionexoPedidoItens`
+sozinha tem mais de 35 milhões de linhas, e um período de 3 dias já devolve
+mais de 200 mil itens. Duas travas existem por isso, e nenhuma é opcional:
+
+1. **`OFFSET/FETCH NEXT` no SQL Server.** A página é recortada pelo banco.
+   Trazer tudo e fatiar em Python estouraria a memória do worker no primeiro
+   acesso.
+2. **Período obrigatório, com janela máxima de 90 dias** (`JANELA_MAXIMA_DIAS`),
+   e `perPage` com teto de 100 (`PER_PAGE_MAXIMO`). Sem período, a consulta
+   varre a base inteira.
+
+Como em qualquer listagem do projeto, **todo filtro é resolvido na consulta**,
+nunca sobre a página já carregada.
+
+### Duas otimizações que parecem estilo e são desempenho
+
+O servidor do OuroWeb é **I/O-bound**: `PAGEIOLATCH_SH` (espera por leitura de
+disco) é a maior espera acumulada dele. Tudo que faz o SQL Server materializar
+dados a mais custa caro ali, e as duas decisões abaixo existem por causa disso.
+Ambas foram medidas — se mexer nelas, **meça de novo**.
+
+**1. A ordem do JOIN.** A primeira versão partia de `Tab_CceBionexoPedido` e
+juntava cabeçalho, itens, cadastro e cidade de uma vez. Com `ORDER BY
+dte_DataVencimento` + `OFFSET`, o plano escolhido passava de **10 minutos**,
+enquanto o mesmo `COUNT(*)` respondia em 0,4s. A versão atual recorta primeiro
+os cabeçalhos do período numa CTE (que usa o índice de `dte_DataVencimento`) e
+só então junta os itens. Por isso `_condicoes()` separa os filtros em "de
+cabeçalho" e "de item" — filtro de cabeçalho aplicado depois do join não reduz
+nada.
+
+**2. Paginação em duas etapas (deferred join).** Mesmo com a CTE, selecionar
+todas as colunas e ordenar numa tacada levava **69 segundos** para devolver 50
+linhas — de novo contra 0,3s do `COUNT(*)` sobre os mesmos joins, e de forma
+consistente, não por oscilação de carga. O motivo é o que o `ORDER BY` precisa
+carregar: para devolver 50 linhas ordenadas, o SQL Server materializa e ordena
+as ~220 mil linhas do período **junto com as colunas de texto largo**
+(`str_DescricaoProduto` tem 1500 caracteres), e isso vai para disco.
+
+A solução é ordenar só as CHAVES e buscar o texto depois, para os 50 ids da
+página (`_linhas_por_id`). Mesma consulta: **1,5 segundo**. A ordem devolvida
+pelo `IN` não é garantida, então ela é reposta em Python a partir da etapa 1 —
+pedir ao banco para ordenar de novo traria o custo de volta.
+
+A **exportação não usa** esse truque, e não teria como: ela devolve todas as
+linhas, então o texto largo precisa ser lido de qualquer forma. É por isso que
+ela tem um timeout próprio de 600s (`timeout_exportacao_segundos`) enquanto a
+tela usa 60s.
+
+### Ordenação vem de lista fechada
+
+`sort` chega pela URL e vira nome de coluna no SQL. Aceitar texto livre seria
+injeção — por isso existe `ORDENACOES_VALIDAS` em `cotacao_contrato.py`, um
+dicionário de chave da API para coluna. Qualquer valor fora dele responde 422.
+Todo o resto entra por bind (`%(nome)s`).
+
+### Banco fora do ar é 503, não 500
+
+`OuroWebIndisponivel` é traduzido para `503 Service Unavailable` no router. Não
+é defeito nosso: é o sistema de origem indisponível, e a tela precisa saber a
+diferença para dizer o que aconteceu em vez de mostrar "erro interno".
+
 ## Onde cada coisa fica (FAQ para agente de IA)
 
 - **Adicionar campo em produto**: `produto_model.py` (coluna em snake_case) →

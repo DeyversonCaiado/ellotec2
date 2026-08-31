@@ -1,0 +1,231 @@
+<div class="p-4 sm:p-6 max-w-[1400px] mx-auto">
+
+  <app-page-header titulo="Cotações" subtitulo="Consulta de cotações" />
+
+  <!-- O limite de 90 dias não é detalhe de implementação: é a diferença entre
+       a tela responder e a consulta varrer 8 GB. Fica visível em amarelo para
+       a pessoa saber ANTES de escolher um período que será recusado. -->
+  <div class="mb-4 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+    <app-icon name="bell" class="size-4 mt-0.5 shrink-0" />
+    <span>
+      A consulta e a exportação são limitadas a um período de <strong>90 dias</strong>.
+      Buscando pelo número da cotação, o período é ignorado.
+    </span>
+  </div>
+
+  <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+
+    <!-- Todos os filtros vão à API e recortam a base inteira, nunca a página
+         já carregada. Ver cotacao.service.ts. -->
+    <div class="p-4 border-b border-gray-100 dark:border-gray-800 space-y-3">
+      <div class="flex flex-col sm:flex-row sm:items-end gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">Cotação</label>
+          <input
+            type="search"
+            inputmode="numeric"
+            placeholder="Nº da cotação"
+            [ngModel]="filtros().cotacao"
+            (ngModelChange)="atualizarFiltro('cotacao', $event)"
+            class="w-36 py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">Vencimento de</label>
+          <input
+            type="date"
+            [ngModel]="filtros().dataInicio"
+            (ngModelChange)="atualizarFiltro('dataInicio', $event)"
+            [disabled]="buscandoPorCotacao()"
+            class="py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500 disabled:opacity-40" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">até</label>
+          <input
+            type="date"
+            [ngModel]="filtros().dataFim"
+            (ngModelChange)="atualizarFiltro('dataFim', $event)"
+            [disabled]="buscandoPorCotacao()"
+            class="py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500 disabled:opacity-40" />
+        </div>
+
+        <div class="flex-1">
+          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">Produto</label>
+          <input
+            type="search"
+            placeholder="Descrição ou código do produto..."
+            [ngModel]="filtros().q"
+            (ngModelChange)="atualizarFiltro('q', $event)"
+            class="w-full py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500" />
+        </div>
+
+        <button
+          type="button"
+          (click)="limparFiltros()"
+          class="py-2 px-3 text-sm font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100">
+          Limpar
+        </button>
+
+        <!-- Exporta TODAS as linhas do filtro, não só a página. O backend
+             responde em streaming, então arquivos grandes não derrubam nada —
+             mas demoram, e por isso o botão mostra o estado. -->
+        <button
+          type="button"
+          (click)="exportar()"
+          [disabled]="exportando() || carregando() || total() === 0"
+          class="inline-flex items-center gap-1.5 py-2 px-3 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40">
+          @if (exportando()) {
+            <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+            </svg>
+            Gerando CSV...
+          } @else {
+            <app-icon name="file-text" class="size-4" />
+            Exportar CSV
+          }
+        </button>
+      </div>
+
+      <div class="flex flex-col sm:flex-row gap-3">
+        <input
+          type="search"
+          placeholder="Hospital"
+          [ngModel]="filtros().hospital"
+          (ngModelChange)="atualizarFiltro('hospital', $event)"
+          class="flex-1 py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500" />
+
+        <input
+          type="search"
+          placeholder="Cidade"
+          [ngModel]="filtros().cidade"
+          (ngModelChange)="atualizarFiltro('cidade', $event)"
+          class="flex-1 py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm focus:border-brand-500 focus:ring-brand-500" />
+
+        <select
+          [ngModel]="filtros().estado"
+          (ngModelChange)="atualizarFiltro('estado', $event)"
+          class="py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm sm:w-32 focus:border-brand-500 focus:ring-brand-500">
+          <option value="">UF</option>
+          @for (uf of estados(); track uf) {
+            <option [value]="uf">{{ uf }}</option>
+          }
+        </select>
+
+        <!-- A mesma cotação chega uma vez para cada CNPJ da distribuidora.
+             Filtrar por empresa é o jeito de ver uma linha por item. -->
+        <select
+          [ngModel]="filtros().empresaId"
+          (ngModelChange)="atualizarFiltro('empresaId', $event)"
+          class="py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm sm:w-56 focus:border-brand-500 focus:ring-brand-500">
+          <option value="">Todas as empresas</option>
+          @for (empresa of empresas(); track empresa.id) {
+            <option [value]="empresa.id">{{ empresa.nome }}</option>
+          }
+        </select>
+
+        <select
+          [ngModel]="filtros().situacao"
+          (ngModelChange)="onSituacaoChange($event)"
+          class="py-2 px-3 border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 rounded-lg text-sm sm:w-48 focus:border-brand-500 focus:ring-brand-500">
+          <option value="todas">Respondidas e não</option>
+          <option value="nao_respondidas">Só não respondidas</option>
+          <option value="respondidas">Só respondidas</option>
+        </select>
+      </div>
+
+    </div>
+
+    @if (erro()) {
+      <div class="p-12 text-center text-sm text-red-600 dark:text-red-400">{{ erro() }}</div>
+    } @else if (carregando()) {
+      <div class="p-12 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm gap-2">
+        <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+        </svg>
+        Consultando o Bionexo...
+      </div>
+    } @else if (itens().length === 0) {
+      <div class="p-12 text-center text-gray-400 dark:text-gray-500 text-sm">Nenhuma cotação encontrada no período.</div>
+    } @else {
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-100 dark:divide-gray-800">
+          <thead class="bg-gray-50 dark:bg-gray-800/60">
+            <tr>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Cotação</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Hospital</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Produto</th>
+              <th class="px-5 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Solicitado</th>
+              <th class="px-5 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Respondido</th>
+              <th class="px-5 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Preço unit.</th>
+              <th class="px-5 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Empresa</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+            @for (item of itens(); track $index) {
+              <tr class="hover:bg-gray-50/60 dark:hover:bg-gray-800/40">
+                <td class="px-5 py-3.5 align-top">
+                  <p class="text-sm font-mono text-gray-800 dark:text-gray-100">{{ item.cotacao }}</p>
+                  <p class="text-xs text-gray-400 dark:text-gray-500">{{ item.dataVencimento | date: 'dd/MM/yyyy' }}</p>
+                </td>
+                <td class="px-5 py-3.5 align-top max-w-xs">
+                  <p class="text-sm text-gray-800 dark:text-gray-100 truncate" [title]="item.hospital">{{ item.hospital }}</p>
+                  <p class="text-xs text-gray-400 dark:text-gray-500">{{ item.cidade }}{{ item.estado ? '/' + item.estado : '' }}</p>
+                </td>
+                <td class="px-5 py-3.5 align-top max-w-md">
+                  <p class="text-sm text-gray-800 dark:text-gray-100 truncate" [title]="item.produtoHospital ?? ''">{{ item.produtoHospital || '—' }}</p>
+                  <p class="text-xs font-mono text-gray-400 dark:text-gray-500">{{ item.codigoProdutoHospital }}</p>
+                </td>
+                <td class="px-5 py-3.5 align-top text-sm text-end text-gray-800 dark:text-gray-100">
+                  {{ item.quantidadeSolicitada }}
+                  <span class="block text-xs text-gray-400 dark:text-gray-500">{{ item.unidade }}</span>
+                </td>
+                <td class="px-5 py-3.5 align-top text-sm text-end">
+                  @if (naoRespondido(item)) {
+                    <span class="text-xs font-semibold text-amber-600 dark:text-amber-400">não cotado</span>
+                  } @else {
+                    <span class="text-gray-800 dark:text-gray-100">{{ item.quantidadeRespondida }}</span>
+                  }
+                </td>
+                <td class="px-5 py-3.5 align-top text-sm text-end font-semibold text-gray-800 dark:text-gray-100">
+                  {{ item.precoUnitario ? (item.precoUnitario | currency: 'BRL') : '—' }}
+                </td>
+                <td class="px-5 py-3.5 align-top text-xs text-gray-500 dark:text-gray-400">{{ item.empresa || '—' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Paginação: a página é recortada NO SQL SERVER (OFFSET/FETCH), não
+           aqui. São mais de 200 mil itens num período de 3 dias — trazer tudo
+           para fatiar no navegador travaria a tela. -->
+      <div class="p-4 border-t border-gray-100 dark:border-gray-800 flex flex-col sm:flex-row sm:items-center gap-3">
+        <p class="text-xs text-gray-500 dark:text-gray-400">
+          {{ primeiroDaPagina() }}–{{ ultimoDaPagina() }} de {{ total() }} ·
+          página {{ pagina() }} de {{ totalPaginas() }}
+        </p>
+        <div class="sm:ms-auto flex items-center gap-2">
+          <button
+            type="button"
+            (click)="irParaPagina(pagina() - 1)"
+            [disabled]="pagina() <= 1 || carregando()"
+            class="inline-flex items-center gap-1.5 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
+          >
+            <app-icon name="chevron-left" class="size-4" />
+            Anterior
+          </button>
+          <button
+            type="button"
+            (click)="irParaPagina(pagina() + 1)"
+            [disabled]="pagina() >= totalPaginas() || carregando()"
+            class="inline-flex items-center gap-1.5 text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-lg px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
+          >
+            Próxima
+            <app-icon name="chevron-right" class="size-4" />
+          </button>
+        </div>
+      </div>
+    }
+  </div>
+</div>

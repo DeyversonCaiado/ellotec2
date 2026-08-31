@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.domains.marcas.marca_model import Marca
 from app.domains.marcas.marca_contrato import MarcaAtualizarSchema, MarcaCriarSchema
 from app.shared.sync_helpers import incrementar_versao, marcar_apagado
+from app.shared.vinculo_origem import preservar_no_dicionario
 
 
 def listar_paginado(
@@ -106,7 +107,9 @@ def atualizar(
     )
 
     campos = dados.model_dump()
-    campos["sistema_origem_id"] = campos.get("sistema_origem_id") or sistema_origem_id
+    # O vínculo com o ERP nunca é apagado por uma gravação que não o traz.
+    # Ver app/shared/vinculo_origem.py — a regra mora lá, num lugar só.
+    preservar_no_dicionario(campos, marca, da_busca=sistema_origem_id)
     _validar_sistema_origem_disponivel(sessao_db, campos["sistema_origem_id"], ignorar_id=marca.id)
 
     for campo, valor in campos.items():

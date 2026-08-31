@@ -22,6 +22,7 @@ from app.domains.enderecamento.enderecamento_model import EstoqueEndereco, Estoq
 from app.domains.estoque import estoque_publico
 from app.domains.produtos import produto_publico
 from app.shared.sync_helpers import incrementar_versao, marcar_apagado
+from app.shared.vinculo_origem import preservar_no_dicionario
 
 _ORDENACAO_ENDERECO = {
     "descricao": EstoqueEndereco.descricao,
@@ -144,6 +145,10 @@ def atualizar_endereco(
             status_code=status.HTTP_409_CONFLICT,
             detail="Já existe um endereço com essa descrição nesta empresa.",
         )
+
+    # O vínculo com o ERP nunca é apagado por uma gravação que não o traz.
+    # Ver app/shared/vinculo_origem.py — a regra mora lá, num lugar só.
+    preservar_no_dicionario(campos, endereco)
 
     for campo, valor in campos.items():
         setattr(endereco, campo, valor)
@@ -382,6 +387,10 @@ def atualizar_vinculo(
             status_code=status.HTTP_409_CONFLICT,
             detail="Este lote já está vinculado a esse endereço.",
         )
+
+    # O vínculo com o ERP nunca é apagado por uma gravação que não o traz.
+    # Ver app/shared/vinculo_origem.py — a regra mora lá, num lugar só.
+    preservar_no_dicionario(campos, vinculo)
 
     for campo, valor in campos.items():
         setattr(vinculo, campo, valor)

@@ -7,7 +7,12 @@ PyYAML==6.0.3
 Pygments==2.20.0
 SQLAlchemy==2.0.51
 alembic==1.18.4
-oracledb==3.4.2
+# NÃO atualize, nem para 3.4.2. Presa em 3.4.0 de propósito: a linha 4.x
+# "dropped support for Oracle Client libraries before 19c" (release notes da
+# 4.0.0) e o Instant Client do servidor Linux é o 12_2 — a 4.x nem carrega o
+# client. O modo thin também não serve: o servidor do ERP recusa com DPY-3010.
+# Ver app/shared/sistema_origem/gestcom/config.py.
+oracledb==3.4.0
 pymssql==2.3.13
 openpyxl==3.1.5
 et-xmlfile==2.0.0

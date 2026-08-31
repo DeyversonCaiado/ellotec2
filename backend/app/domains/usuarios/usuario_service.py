@@ -5,6 +5,7 @@ from app.core.auth.seguranca import gerar_hash_senha
 from app.domains.usuarios.usuario_model import Usuario, UsuarioPermissao
 from app.domains.usuarios.usuario_contrato import UsuarioAtualizarSchema, UsuarioCriarSchema
 from app.shared.sync_helpers import incrementar_versao, marcar_apagado
+from app.shared.vinculo_origem import resolver as resolver_vinculo_origem
 
 
 def listar(sessao_db: Session) -> list[Usuario]:
@@ -181,9 +182,21 @@ def atualizar(
         else obter_por_id(sessao_db, usuario_id)
     )
 
-    # Preserva o sistema_origem_id usado para localizar o registro quando o
-    # corpo da requisição não o repetir — ver mesmo comentário em clientes.
-    sistema_origem_id_final = dados.sistema_origem_id or sistema_origem_id
+    # NUNCA apaga o vínculo com o ERP. A ordem é: o que o corpo mandou, senão o
+    # que localizou o registro, senão O QUE JÁ ESTAVA GRAVADO.
+    #
+    # Esse último degrau é o que faltava, e ele quebrou a produção: editar o
+    # registro pela TELA manda um corpo sem `sistemaOrigemId` e sem o query
+    # param, então o campo era zerado em silêncio. O funcionário 00168 perdeu o
+    # vínculo desse jeito, e a integração de pedidos parou por três dias em
+    # loop de restart — todo pedido dele passou a responder 404 "Vendedor não
+    # encontrado para o sistema de origem informado".
+    #
+    # Só a integração cria esse vínculo; ninguém o remove por um formulário que
+    # nem exibe o campo. Para desvincular de verdade, é um caminho explícito.
+    sistema_origem_id_final = resolver_vinculo_origem(
+        dados.sistema_origem_id, sistema_origem_id, usuario.sistema_origem_id
+    )
 
     _validar_email_disponivel(sessao_db, dados.email, ignorar_id=usuario.id)
     _validar_usuario_disponivel(sessao_db, dados.usuario, ignorar_id=usuario.id)

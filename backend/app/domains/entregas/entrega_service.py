@@ -29,6 +29,7 @@ from app.domains.entregas.entrega_model import (
 )
 from app.domains.usuarios import usuario_publico
 from app.shared.sync_helpers import incrementar_versao, marcar_apagado
+from app.shared.vinculo_origem import resolver as resolver_vinculo_origem
 
 # Fechada de propósito: `sort` vem da query string, e interpolar isso num
 # ORDER BY seria injeção. Mesmo padrão dos outros domínios.
@@ -174,7 +175,11 @@ def registrar_entrega(sessao_db: Session, dados: EntregaCriarSchema) -> Entrega:
     entrega.transportadora_cnpj = dados.transportadora_cnpj
     entrega.motorista = dados.motorista
     entrega.placa_veiculo = dados.placa_veiculo
-    entrega.sistema_origem_id = dados.sistema_origem_id
+    # Reprocessamento que não repete o campo não apaga o vínculo com o ERP.
+    # Ver app/shared/vinculo_origem.py.
+    entrega.sistema_origem_id = resolver_vinculo_origem(
+        dados.sistema_origem_id, ja_gravado=entrega.sistema_origem_id
+    )
 
     if novo:
         sessao_db.add(entrega)
@@ -286,7 +291,9 @@ def registrar_nota(sessao_db: Session, dados: EntregaNotaCriarSchema) -> Entrega
     nota.cliente_uf = dados.cliente_uf
     nota.transportadora_nome = dados.transportadora_nome
     nota.termolabil = dados.termolabil
-    nota.sistema_origem_id = dados.sistema_origem_id
+    nota.sistema_origem_id = resolver_vinculo_origem(
+        dados.sistema_origem_id, ja_gravado=nota.sistema_origem_id
+    )
 
     # Vendedor não resolvido NÃO recusa a nota: um código de funcionário que
     # não existe aqui é problema de cadastro, e perder o documento por causa

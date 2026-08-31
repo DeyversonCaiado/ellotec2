@@ -9,6 +9,7 @@ from app.domains.produtos.produto_model import Produto, ProdutoCodigoBarras
 from app.domains.produtos.produto_contrato import ProdutoAtualizarSchema, ProdutoCriarSchema
 from app.shared import tabela_cmed
 from app.shared.sync_helpers import incrementar_versao, marcar_apagado
+from app.shared.vinculo_origem import preservar_no_dicionario
 
 # Campos do contrato que não são coluna de `produtos` — cada um tem tratamento
 # próprio no criar/atualizar e por isso sai do `model_dump` que alimenta o model.
@@ -178,9 +179,9 @@ def atualizar(
 
     campos = dados.model_dump(exclude=_CAMPOS_FORA_DA_TABELA)
     campos["marca_id"] = _resolver_marca_id(sessao_db, dados)
-    # Preserva o sistema_origem_id usado para localizar o registro quando o
-    # corpo da requisição não o repetir — ver mesmo comentário em clientes.
-    campos["sistema_origem_id"] = campos.get("sistema_origem_id") or sistema_origem_id
+    # O vínculo com o ERP nunca é apagado por uma gravação que não o traz.
+    # Ver app/shared/vinculo_origem.py — a regra mora lá, num lugar só.
+    preservar_no_dicionario(campos, produto, da_busca=sistema_origem_id)
     _validar_sistema_origem_disponivel(sessao_db, campos["sistema_origem_id"], ignorar_id=produto.id)
 
     for campo, valor in campos.items():

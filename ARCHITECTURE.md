@@ -384,6 +384,97 @@ O uso legítimo dos `sync*` é diagnóstico — "quando esta linha foi tocada pe
 última vez pela integração" —, e nesse caso o rótulo na tela precisa deixar
 claro que é sobre o registro, não sobre o fato.
 
+## O vínculo com o sistema de origem (`sistemaOrigemId`) não é da tela
+
+Todo campo terminado em **`sistemaOrigemId`** guarda a identidade do registro no
+ERP: `sistemaOrigemId`, `empresaSistemaOrigemId`, `pedidoSistemaOrigemId`,
+`produtoSistemaOrigemId`. Quem cria e mantém esse vínculo é a **integração**,
+nunca um formulário.
+
+**A regra, do lado do front, são duas frases:**
+
+1. Formulário de domínio **não edita** campo de vínculo. Ele não aparece como
+   input, e não vai no payload.
+2. Se o formulário precisar **exibir** o vínculo (para conferência), ele é
+   somente-leitura.
+
+### Por que isso está escrito aqui, e não só no backend
+
+Porque o dano nasceu aqui. A tela de usuários não envia `sistemaOrigemId` — o
+que está certo. Mas o backend, ao receber um `PUT` sem o campo, gravava `null` em
+cima do valor existente. O front cumpria a regra e o registro perdia o vínculo
+mesmo assim.
+
+O backend foi corrigido (ver `backend/ARCHITECTURE.md` → "O vínculo com o
+sistema de origem nunca é apagado"), e a proteção agora está lá, que é o lugar
+certo: a barreira real é do servidor. Esta seção existe para o outro lado da
+mesma moeda — **não tente "consertar" isso pelo front** mandando o campo de
+volta no payload.
+
+O efeito daquele defeito foi caro e apareceu longe da causa: o funcionário
+`00168` perdeu o vínculo numa edição de tela, e **dias depois** a integração de
+pedidos parou por três dias, porque todo pedido daquele vendedor passou a ser
+recusado com 404.
+
+### O que NÃO fazer
+
+```typescript
+// ERRADO — reenviar o vínculo para "não deixar apagar"
+gravar(): void {
+  this.service.atualizar(this.id(), {
+    ...this.form.value,
+    sistemaOrigemId: this.usuario()?.sistemaOrigemId,  // não faça isso
+  });
+}
+```
+
+Isso parece defensivo e é o contrário: transforma um campo que a tela não
+governa em algo que a tela passa a governar. Basta o formulário carregar um
+registro desatualizado para ele gravar um vínculo velho por cima do novo. A
+garantia é do backend, e ela já existe.
+
+```html
+<!-- ERRADO — o vínculo não é editável -->
+<input type="text" formControlName="sistemaOrigemId" />
+```
+
+### O que fazer
+
+Se o vínculo precisa aparecer, ele é informação, não campo:
+
+```html
+<!-- CERTO — exibe para conferência, sem editar -->
+@if (usuario()?.sistemaOrigemId) {
+  <p class="text-xs text-gray-500">
+    Código no ERP: <span class="font-mono">{{ usuario()!.sistemaOrigemId }}</span>
+  </p>
+}
+```
+
+No `.model.ts`, o campo entra no tipo de **resposta** (a tela lê) e fica fora do
+tipo de **payload** de gravação (a tela não escreve) — a menos que o consumidor
+daquele service seja a própria integração.
+
+### A exceção que existe hoje: `produto-form`
+
+O formulário de produtos **tem** um input de `sistemaOrigemId`, e é a única tela
+que edita um campo de vínculo. Isso é anterior a esta seção.
+
+Ela não viola a regra principal — desde a correção do backend, campo vazio cai
+no valor já gravado e **não apaga nada**. O que ela permite é *trocar* o vínculo
+à mão, o que só faz sentido para ligar um produto cadastrado manualmente a um
+código do ERP.
+
+Se essa capacidade não for usada de verdade, o input deve virar exibição
+somente-leitura, como no exemplo acima. Enquanto existir, é exceção conhecida e
+única — não é precedente para telas novas.
+
+### Onde isso importa hoje
+
+Nas telas de cadastro dos domínios alimentados pela integração: clientes,
+produtos, marcas, empresas, usuários e pedidos. Ao criar uma tela nova para um
+domínio com campo de vínculo, siga o desenho desta seção.
+
 ## Regras de lint / import (a fazer cumprir)
 
 > Esta seção é a **autoridade** sobre o que pode atravessar a fronteira de um

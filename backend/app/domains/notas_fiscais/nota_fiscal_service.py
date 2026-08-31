@@ -13,6 +13,7 @@ from app.domains.notas_fiscais.nota_fiscal_contrato import (
 )
 from app.domains.notas_fiscais.nota_fiscal_model import NotaFiscal, NotaFiscalItem
 from app.shared.sync_helpers import incrementar_versao, marcar_apagado
+from app.shared.vinculo_origem import resolver as resolver_vinculo_origem
 
 # Fechada de propósito: `sort` vem da query string, e interpolar isso num
 # ORDER BY seria injeção. Mesmo padrão de pedido_service.listar_paginado.
@@ -343,7 +344,11 @@ def _aplicar_campos(nota: NotaFiscal, dados: NotaFiscalBaseSchema, empresa_id: s
     nota.peso_bruto = dados.peso_bruto
     nota.peso_liquido = dados.peso_liquido
 
-    nota.sistema_origem_id = dados.sistema_origem_id
+    # Mesma regra do XML logo abaixo, e pelo mesmo motivo: corpo que não traz
+    # o campo não apaga o que está lá. Ver app/shared/vinculo_origem.py.
+    nota.sistema_origem_id = resolver_vinculo_origem(
+        dados.sistema_origem_id, ja_gravado=nota.sistema_origem_id
+    )
     nota.informacoes_complementares = dados.informacoes_complementares
     # O XML só é sobrescrito quando vier preenchido: uma correção de capa
     # enviada sem o XML não pode APAGAR o documento original, que é o que a

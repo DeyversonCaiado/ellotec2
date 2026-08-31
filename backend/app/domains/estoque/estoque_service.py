@@ -22,6 +22,7 @@ from app.domains.estoque.estoque_contrato import LoteEntradaSchema, SaldoEntrada
 from app.domains.estoque.estoque_model import Estoque, EstoqueLote
 from app.domains.produtos import produto_publico
 from app.shared.sync_helpers import incrementar_versao, marcar_apagado
+from app.shared.vinculo_origem import preservar_no_dicionario
 
 
 @dataclass(frozen=True)
@@ -198,6 +199,10 @@ def _atualizar(sessao_db: Session, configuracao: _Config, registro_id: str | Non
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=configuracao.rotulo + " não encontrado."
         )
+
+    # O vínculo com o ERP nunca é apagado por uma gravação que não o traz.
+    # Ver app/shared/vinculo_origem.py — a regra mora lá, num lugar só.
+    preservar_no_dicionario(campos, registro)
 
     for campo, valor in campos.items():
         setattr(registro, campo, valor)

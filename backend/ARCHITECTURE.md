@@ -267,6 +267,101 @@ O mesmo raciocínio vale para soft delete: `sync_deleted_at` diz que a linha foi
 removida, e não *por que* nem *quando o negócio cancelou algo* — se essa
 informação importa, ela tem coluna própria.
 
+## O vínculo com o sistema de origem nunca é apagado
+
+Todo campo cujo nome termina em **`sistema_origem_id`** guarda a identidade do
+registro no ERP: `sistema_origem_id`, `empresa_sistema_origem_id`,
+`pedido_sistema_origem_id`, `produto_sistema_origem_id`. Eles existem em
+praticamente todo domínio que a integração alimenta — clientes, produtos,
+marcas, empresas, usuários, pedidos, estoque, endereçamento, entregas e notas
+fiscais.
+
+**A regra é uma frase:** uma gravação que não traz o campo **não o apaga**.
+
+A ordem de precedência, sempre a mesma, é:
+
+1. o valor que o **corpo** da requisição trouxe;
+2. senão, o valor pelo qual o registro foi **localizado** (o query param que a
+   integração usa em `PUT /recurso/{id}?sistema_origem_id=...`);
+3. senão, **o que já estava gravado**.
+
+Apagar o vínculo é operação explícita, e hoje não existe endpoint para ela. Se
+um dia existir, será um caminho próprio, com nome próprio — nunca o efeito
+colateral de um formulário que sequer exibe o campo.
+
+### O incidente que criou a regra
+
+Faltava o degrau 3, e a falta era invisível: a tela de usuários não exibe nem
+envia `sistemaOrigemId`, e edita **pelo id**, sem o query param. Os dois
+primeiros degraus davam `None`, e o campo era zerado em silêncio — sem erro, sem
+log, com `sync_version` incrementando normalmente.
+
+O funcionário `00168` perdeu o vínculo assim. A consequência apareceu **dias
+depois e em outro domínio**: todo pedido daquele vendedor passou a responder
+`404 Vendedor não encontrado para o sistema de origem informado`, o sincronizador
+levantou `RuntimeError`, o processo morreu, o systemd reiniciou, e o ciclo se
+repetiu a cada 30 segundos. A integração de pedidos ficou **três dias parada**,
+com 173 pedidos represados, enquanto o `systemctl status` mostrava
+`active (running)`.
+
+Guarde a forma do defeito, que é o que se repete: **a escrita errada é barata e
+silenciosa; a conta chega longe dali.**
+
+### Como se faz
+
+A regra mora em **`app/shared/vinculo_origem.py`**, num lugar só. Não escreva a
+cadeia de `or` à mão — a versão manual já foi escrita errado em dez arquivos ao
+mesmo tempo.
+
+**Campo a campo**, quando o service atribui direto:
+
+```python
+# FRAGMENTO ILUSTRATIVO
+from app.shared.vinculo_origem import resolver as resolver_vinculo_origem
+
+nota.sistema_origem_id = resolver_vinculo_origem(
+    dados.sistema_origem_id, ja_gravado=nota.sistema_origem_id
+)
+```
+
+**Dicionário**, quando o service faz `model_dump()` + laço de `setattr` — cuida
+de todos os campos de vínculo de uma vez, inclusive os compostos:
+
+```python
+# FRAGMENTO ILUSTRATIVO
+from app.shared.vinculo_origem import preservar_no_dicionario
+
+campos = dados.model_dump()
+preservar_no_dicionario(campos, cliente, da_busca=sistema_origem_id)
+
+for campo, valor in campos.items():
+    setattr(cliente, campo, valor)
+```
+
+`da_busca` só se aplica ao campo `sistema_origem_id`, que é a identidade
+**deste** registro. Os compostos referenciam **outro** registro, e a chave que
+localizou este não diz nada sobre eles.
+
+### O que NÃO precisa da regra
+
+**Criação.** Não há valor anterior a preservar, então
+`Usuario(sistema_origem_id=dados.sistema_origem_id)` está correto como está.
+
+**Leitura.** Passar o valor como argumento nomeado ao montar um schema de
+resposta (`UsuarioRespostaSchema(sistema_origem_id=usuario.sistema_origem_id)`)
+é leitura, não escrita.
+
+### Como isso é cobrado
+
+`tests/test_vinculo_origem.py` faz uma **varredura em todos os services** com
+`ast`: para cada função que atribui a um campo de vínculo, exige que a função
+use `vinculo_origem`. Um domínio novo que escreva por fora quebra o teste com o
+nome do arquivo e da função.
+
+Isso é deliberado: o defeito original apareceu em dez arquivos ao mesmo tempo, e
+nenhum teste por domínio teria pego todos. Se o teste falhar no seu código, não
+é para contorná-lo — é para usar a regra.
+
 ## Regras de import entre domínios
 
 > Esta seção é a **autoridade** sobre o que pode atravessar a fronteira de um

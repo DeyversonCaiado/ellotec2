@@ -21,6 +21,24 @@ Group=ello
 WorkingDirectory=/home/ello/projetos/ellotec2/backend
 ExecStart=/home/ello/projetos/ellotec2/backend/.venv/bin/python -m app.shared.sistema_origem.app
 
+# O Oracle do ERP exige o Instant Client (modo thick) — ver
+# app/shared/sistema_origem/gestcom/config.py. O código descobre a PASTA do
+# client pelo sistema operacional, mas isso resolve só metade: `lib_dir` diz ao
+# driver onde achar o `libclntsh.so`, e as bibliotecas de que ELE depende
+# (libmql1.so, libipc1.so, libnnz*.so) são resolvidas pelo carregador do
+# sistema, que não conhece essa pasta.
+#
+# Sem esta linha o serviço sobe e morre com
+# "DPI-1047: Cannot locate a 64-bit Oracle Client library: libmql1.so: cannot
+# open shared object file" — uma mensagem que parece dizer que o client não
+# está instalado, quando ele está.
+#
+# A alternativa é registrar a pasta no carregador do sistema
+# (/etc/ld.so.conf.d/ + ldconfig), que vale para qualquer processo. Aqui a
+# variável basta: só este serviço fala com o Oracle do GESTCOM — a API não
+# importa o pacote `gestcom`.
+Environment="LD_LIBRARY_PATH=/opt/oracle/instantclient_12_2"
+
 # O loop chama os.._exit(1) de propósito quando um registro de origem está
 # inválido — o dado precisa ser corrigido no ERP. Reinicia mesmo assim, com
 # espera maior, para não entrar em loop de falha rápida.

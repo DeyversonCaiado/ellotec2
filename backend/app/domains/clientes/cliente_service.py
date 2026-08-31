@@ -6,6 +6,7 @@ from app.domains.cidades import cidade_publico
 from app.domains.clientes.cliente_model import Cliente
 from app.domains.clientes.cliente_contrato import ClienteAtualizarSchema, ClienteCriarSchema
 from app.shared.sync_helpers import incrementar_versao, marcar_apagado
+from app.shared.vinculo_origem import preservar_no_dicionario
 
 
 def listar_paginado(
@@ -135,11 +136,21 @@ def atualizar(
 
     campos = dados.model_dump(exclude={"cidade_ibge"})
     campos["cidade_id"] = _resolver_cidade_id(sessao_db, dados)
-    # Se o cliente foi localizado pelo sistema_origem_id (via query param) e o
-    # corpo da requisição não repetiu o campo, preserva o valor usado na busca
-    # em vez de apagá-lo — o integrador não deveria precisar reenviar a própria
-    # chave que já usou para identificar o registro.
-    campos["sistema_origem_id"] = campos.get("sistema_origem_id") or sistema_origem_id
+    # NUNCA apaga o vínculo com o ERP. A ordem é: o que o corpo mandou, senão o
+    # que localizou o registro, senão O QUE JÁ ESTAVA GRAVADO.
+    #
+    # Esse último degrau é o que faltava, e ele quebrou a produção: editar o
+    # registro pela TELA manda um corpo sem `sistemaOrigemId` e sem o query
+    # param, então o campo era zerado em silêncio. O funcionário 00168 perdeu o
+    # vínculo desse jeito, e a integração de pedidos parou por três dias em
+    # loop de restart — todo pedido dele passou a responder 404 "Vendedor não
+    # encontrado para o sistema de origem informado".
+    #
+    # Só a integração cria esse vínculo; ninguém o remove por um formulário que
+    # nem exibe o campo. Para desvincular de verdade, é um caminho explícito.
+    # O vínculo com o ERP nunca é apagado por uma gravação que não o traz.
+    # Ver app/shared/vinculo_origem.py — a regra mora lá, num lugar só.
+    preservar_no_dicionario(campos, cliente, da_busca=sistema_origem_id)
     _validar_sistema_origem_disponivel(sessao_db, campos["sistema_origem_id"], ignorar_id=cliente.id)
 
     for campo, valor in campos.items():

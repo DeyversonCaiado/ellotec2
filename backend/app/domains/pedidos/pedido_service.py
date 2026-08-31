@@ -12,6 +12,7 @@ from app.domains.pedidos.pedido_contrato import (
 from app.domains.produtos import produto_publico
 from app.domains.usuarios import usuario_publico
 from app.shared.sync_helpers import incrementar_versao, marcar_apagado
+from app.shared.vinculo_origem import resolver as resolver_vinculo_origem
 
 
 def listar_status(sessao_db: Session) -> list[PedidoStatus]:
@@ -345,13 +346,21 @@ def _aplicar_dados_do_item(
     linha.quantidade = entrada.quantidade
     linha.preco_unitario = entrada.preco_unitario
     linha.lote = entrada.lote
-    linha.empresa_sistema_origem_id = (
-        entrada.empresa_sistema_origem_id or empresa_sistema_origem_id
+    # Os três vínculos com o ERP nunca são apagados por uma reconciliação que
+    # não os traz — ver app/shared/vinculo_origem.py.
+    linha.empresa_sistema_origem_id = resolver_vinculo_origem(
+        entrada.empresa_sistema_origem_id,
+        empresa_sistema_origem_id,
+        linha.empresa_sistema_origem_id,
     )
-    linha.pedido_sistema_origem_id = (
-        entrada.pedido_sistema_origem_id or pedido_sistema_origem_id
+    linha.pedido_sistema_origem_id = resolver_vinculo_origem(
+        entrada.pedido_sistema_origem_id,
+        pedido_sistema_origem_id,
+        linha.pedido_sistema_origem_id,
     )
-    linha.produto_sistema_origem_id = entrada.produto_sistema_origem_id
+    linha.produto_sistema_origem_id = resolver_vinculo_origem(
+        entrada.produto_sistema_origem_id, ja_gravado=linha.produto_sistema_origem_id
+    )
     return linha
 
 
@@ -480,9 +489,21 @@ def atualizar(
         else obter_por_id(sessao_db, pedido_id)
     )
 
-    # Preserva o sistema_origem_id usado para localizar o registro quando o
-    # corpo da requisição não o repetir — ver mesmo comentário em clientes.
-    sistema_origem_id_final = dados.sistema_origem_id or sistema_origem_id
+    # NUNCA apaga o vínculo com o ERP. A ordem é: o que o corpo mandou, senão o
+    # que localizou o registro, senão O QUE JÁ ESTAVA GRAVADO.
+    #
+    # Esse último degrau é o que faltava, e ele quebrou a produção: editar o
+    # registro pela TELA manda um corpo sem `sistemaOrigemId` e sem o query
+    # param, então o campo era zerado em silêncio. O funcionário 00168 perdeu o
+    # vínculo desse jeito, e a integração de pedidos parou por três dias em
+    # loop de restart — todo pedido dele passou a responder 404 "Vendedor não
+    # encontrado para o sistema de origem informado".
+    #
+    # Só a integração cria esse vínculo; ninguém o remove por um formulário que
+    # nem exibe o campo. Para desvincular de verdade, é um caminho explícito.
+    sistema_origem_id_final = resolver_vinculo_origem(
+        dados.sistema_origem_id, sistema_origem_id, pedido.sistema_origem_id
+    )
     _validar_sistema_origem_disponivel(sessao_db, sistema_origem_id_final, empresa_id, ignorar_id=pedido.id)
 
     pedido.data_pedido = dados.data_pedido

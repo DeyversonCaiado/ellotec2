@@ -285,6 +285,32 @@ Copie [`.env.example`](.env.example) para
   Windows no Linux derruba a sincronização com `DPI-1047: Cannot locate a
   64-bit Oracle Client library`
 
+> **No Linux, achar a pasta do Instant Client não basta.** O `lib_dir` diz ao
+> driver onde está o `libclntsh.so`, mas as bibliotecas de que ele depende
+> (`libmql1.so`, `libipc1.so`, `libnnz*.so`) são resolvidas pelo carregador do
+> sistema, que não conhece essa pasta. Sem isso o serviço morre com
+> `DPI-1047 ... libmql1.so: cannot open shared object file` — mensagem que
+> parece dizer que o client não está instalado, quando ele está.
+>
+> A unit `deploy/ellotec2-sincronizacao.service` já traz
+> `Environment="LD_LIBRARY_PATH=/opt/oracle/instantclient_12_2"` por causa
+> disso. Num servidor que já rodava antes desta linha existir, o ajuste é um
+> drop-in:
+>
+> ```bash
+> sudo mkdir -p /etc/systemd/system/ellotec2-sincronizacao.service.d
+> sudo tee /etc/systemd/system/ellotec2-sincronizacao.service.d/oracle.conf <<'EOF'
+> [Service]
+> Environment="LD_LIBRARY_PATH=/opt/oracle/instantclient_12_2"
+> EOF
+> sudo systemctl daemon-reload && sudo systemctl restart ellotec2-sincronizacao
+> ```
+>
+> A alternativa é registrar a pasta no carregador do sistema
+> (`/etc/ld.so.conf.d/oracle-instantclient.conf` + `sudo ldconfig`), que vale
+> para qualquer processo. Só o serviço de sincronização fala com o Oracle do
+> GESTCOM — a API não importa o pacote `gestcom` —, então a variável basta.
+
 O `.env` é lido a partir do diretório onde o processo roda, não da pasta do
 código — é por isso que os dois serviços definem
 `WorkingDirectory=/home/ello/projetos/ellotec2/backend`. Sem essa linha a API

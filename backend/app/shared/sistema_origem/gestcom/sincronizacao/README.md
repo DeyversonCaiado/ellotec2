@@ -18,6 +18,14 @@ nesta ordem (cada uma depende da anterior já ter sido enviada):
 3. `marcas.sincronizar_marcas()`
 4. `produtos.sincronizar_produtos()`
 5. `pedidos.sincronizar_pedidos()`
+6. `entregas.sincronizar_entregas()`
+
+`entregas` é a única que manda para DOIS endpoints por registro: primeiro
+`POST /entregas/mapas` (o mapa de carga da nota, quando há), depois
+`POST /entregas/notas` (a nota com os itens). Os dois são upsert e respondem
+200 sempre — por isso ela não tem o tratamento de 409/PUT das outras. Ela é a
+última do ciclo porque depende de funcionários (o vendedor da nota) e de
+empresas já sincronizados.
 
 Falha definitiva num registro (rejeição real da API, não um 409 normal)
 propaga como `RuntimeError` e derruba o processo — dado de origem precisa
@@ -50,6 +58,14 @@ python -m app.shared.sistema_origem.cadastros.funcionarios
 - `<nome>_controle.txt` neste diretório: guarda a última `DATA_HORA_ALTERACAO`
   processada de cada cadastro, para que a próxima execução envie apenas os
   registros alterados desde então.
+
+Em `entregas.py`, arquivo de controle ausente NÃO significa "traga tudo": a
+primeira execução começa em `DATA_INICIAL` (agosto/2026, quando a gestão de
+entregas entrou no ar), porque varrer a nota mais antiga do ERP seria anos de
+documento que a tela não acompanha. Para recarregar mais histórico, apague o
+arquivo e baixe essa constante. `sincronizar_entregas(limite=N)` roda só as N
+notas mais antigas da fila — é o jeito de conferir a integração numa amostra
+antes de soltar o lote inteiro.
 
 ## Configuração da API
 

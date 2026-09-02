@@ -232,8 +232,8 @@
                   </span>
                 </td>
                 <td class="px-5 py-3.5">
-                  <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corStatus(nota.statusAtual)">
-                    {{ rotuloStatus(nota.statusAtual) }}
+                  <span class="inline-flex items-center text-xs font-semibold rounded-full px-2.5 py-1" [class]="corStatusDaNota(nota.statusAtual, nota.qtdInteracoes)">
+                    {{ rotuloStatusDaNota(nota.statusAtual, nota.qtdInteracoes) }}
                   </span>
                 </td>
                 <td class="px-5 py-3.5 text-sm text-gray-800 dark:text-gray-100 text-end font-semibold">{{ nota.valorTotal | currency:'BRL' }}</td>

@@ -20,6 +20,30 @@ StatusEntrega = Literal[
     "devolucao_parcial",
 ]
 
+# O status com que a nota NASCE, antes de qualquer interação. A coluna é
+# NOT NULL e o ERP não tem status de acompanhamento — ele começa a existir aqui,
+# na primeira interação lançada.
+STATUS_NASCIMENTO = "aguardando_embarque"
+
+# Os status que uma PESSOA pode escolher ao lançar ou corrigir uma interação.
+#
+# É o `StatusEntrega` menos o de nascimento, e a diferença entre os dois é o
+# ponto: o conjunto que a coluna pode GUARDAR é maior que o que o usuário pode
+# ESCOLHER. Lançar um evento dizendo "aguardando embarque" seria registrar como
+# fato o estado de quem ainda não registrou nada — a tela mostra "Sem
+# interação" nesse caso, e não um status que alguém teria afirmado.
+#
+# Vale como barreira de verdade porque está no servidor: o front esconder a
+# opção é só UX, e a API é chamável direto.
+StatusInteracao = Literal[
+    "com_ocorrencia",
+    "em_transito",
+    "entrega_realizada",
+    "recusada_no_ato",
+    "retida_fiscalizacao",
+    "devolucao_parcial",
+]
+
 # A classificação que o SQL do sistema antigo montava a partir do CFOP e do
 # status da nota. Chega pronta pela API — quem sabe classificar é o ERP.
 TipoNota = Literal["venda", "bonificacao", "devolucao_cliente", "complementar", "perda", "outros"]
@@ -138,18 +162,25 @@ class EntregaNotaCriarSchema(ContratoBase):
 
 class InteracaoCriarSchema(ContratoBase):
     """O usuário NÃO vem no payload: é o do token. Deixar quem registra ser
-    escolhido por quem chama permitiria lançar interação no nome de outro."""
+    escolhido por quem chama permitiria lançar interação no nome de outro.
 
-    status: StatusEntrega
+    `StatusInteracao` e não `StatusEntrega`: o status de nascimento não é uma
+    escolha — ver o comentário dele lá em cima."""
+
+    status: StatusInteracao
     observacao: str = Field(default="", max_length=1000)
 
 
 class InteracaoAtualizarSchema(ContratoBase):
     """Interação é editável — quem lança digita errado, e obrigar um segundo
     evento só para corrigir uma palavra sujaria a timeline. A edição fica
-    registrada (editadoPor/editadoEm) e NÃO reordena a linha do tempo."""
+    registrada (editadoPor/editadoEm) e NÃO reordena a linha do tempo.
 
-    status: StatusEntrega
+    Corrigir uma interação antiga para o status de nascimento também não é
+    permitido: as interações legadas que ainda têm esse status são história e
+    continuam sendo exibidas, mas nenhuma nova pode ser gravada assim."""
+
+    status: StatusInteracao
     observacao: str = Field(default="", max_length=1000)
 
 
@@ -245,6 +276,11 @@ class NotaDevolucaoSchema(ContratoBase):
     valor_total: float
     chave_acesso_nota: str | None
     status_atual: str
+    # Vai junto com o status porque a tela não rotula um pelo outro: sem
+    # interação nenhuma, o que se mostra é "Sem interação", não o status de
+    # nascimento. Sem este campo aqui, o card da devolução seria o único lugar
+    # da tela a exibir "Aguardando embarque" para uma nota que ninguém tocou.
+    qtd_interacoes: int = 0
 
 
 class EntregaNotaRespostaSchema(EntregaNotaResumoSchema):

@@ -45,8 +45,61 @@ export const STATUS_PRAZO: Record<StatusPrazo, { rotulo: string; cor: string }> 
   prazo_nao_definido: { rotulo: 'Prazo não definido', cor: 'text-gray-500 bg-gray-100' },
 };
 
+/** O status com que a nota NASCE, antes de qualquer interação. */
+export const STATUS_NASCIMENTO: StatusEntrega = 'aguardando_embarque';
+
+/** As opções que a pessoa ESCOLHE ao lançar ou corrigir uma interação.
+ *
+ *  É `STATUS_ENTREGA` menos o de nascimento: ninguém "lança" um aguardando
+ *  embarque — é o estado de quem ainda não lançou nada, e a nota já mostra
+ *  "Sem interação" nesse caso. A recusa de verdade é do backend
+ *  (`StatusInteracao` em entrega_contrato.py); esconder aqui é só não oferecer
+ *  o que seria recusado. */
+export const STATUS_INTERACAO = STATUS_ENTREGA.filter((s) => s.valor !== STATUS_NASCIMENTO);
+
+/** O que o formulário de interação aceita — o mesmo `StatusInteracao` do
+ *  contrato do backend, escrito como subtração para os dois não divergirem
+ *  quando um status novo entrar na lista. */
+export type StatusInteracao = Exclude<StatusEntrega, typeof STATUS_NASCIMENTO>;
+
+/** O status pré-selecionado quando não dá para aproveitar o atual. */
+export const STATUS_INTERACAO_PADRAO: StatusInteracao = 'em_transito';
+
+/** Converte um status qualquer no que o formulário pode ter selecionado.
+ *
+ *  Existe por dois caminhos reais: a nota que ainda não tem interação está em
+ *  `aguardando_embarque`, e o dialog pré-seleciona o status atual dela; e as
+ *  interações legadas migradas do Streamlit podem ter esse status, e o botão
+ *  de corrigir carrega o valor do evento. Nos dois casos o `p-select` ficaria
+ *  em branco, com um valor que a lista não contém. */
+export function paraStatusEscolhivel(status: string): StatusInteracao {
+  return STATUS_INTERACAO.some((s) => s.valor === status)
+    ? (status as StatusInteracao)
+    : STATUS_INTERACAO_PADRAO;
+}
+
 export function rotuloStatus(status: string): string {
   return STATUS_ENTREGA.find((s) => s.valor === status)?.rotulo ?? status;
+}
+
+/** O rótulo do estado ATUAL da nota, que não é a mesma coisa que o rótulo de um
+ *  evento da timeline.
+ *
+ *  Sem nenhuma interação, a nota mostra "Sem interação" — e não "Aguardando
+ *  embarque", que afirmaria algo que ninguém registrou. A condição é a
+ *  CONTAGEM de interações, não o valor do status: existem notas antigas,
+ *  migradas do sistema em Streamlit, cuja última interação de verdade tem
+ *  status `aguardando_embarque`. Nessas o rótulo continua sendo o do evento,
+ *  porque alguém realmente o lançou.
+ *
+ *  Na timeline o rótulo continua vindo de `rotuloStatus`: lá cada card É um
+ *  evento, e o desses casos legados é "Aguardando embarque" mesmo. */
+export function rotuloStatusDaNota(status: string, qtdInteracoes: number): string {
+  return qtdInteracoes === 0 ? 'Sem interação' : rotuloStatus(status);
+}
+
+export function corStatusDaNota(status: string, qtdInteracoes: number): string {
+  return qtdInteracoes === 0 ? 'text-gray-500 bg-gray-100' : corStatus(status);
 }
 
 export function corStatus(status: string): string {
@@ -150,6 +203,7 @@ export interface NotaDevolucao {
   valorTotal: number;
   chaveAcessoNota: string | null;
   statusAtual: StatusEntrega;
+  qtdInteracoes: number;
 }
 
 export interface EntregaNota extends EntregaNotaResumo {

@@ -11,6 +11,16 @@ import httpx
 
 MAX_TENTATIVAS_PADRAO = 3
 
+# Um cliente só para o processo inteiro, em vez de `httpx.request(...)`, que
+# abre e fecha uma conexão TCP por chamada.
+#
+# Não é micro-otimização: medido nesta máquina, a mesma chamada custa 2,5s
+# abrindo conexão nova contra `localhost` e 0,06s reaproveitando a conexão —
+# 40x. O grosso dos 2,5s é o `localhost` resolvendo para IPv6 primeiro no
+# Windows e só depois caindo no IPv4; a API responde em 60ms. Num lote de
+# centenas de registros isso é a diferença entre um minuto e uma hora.
+_CLIENTE = httpx.Client(timeout=30)
+
 
 def requisitar_com_retry(
     metodo,
@@ -37,7 +47,7 @@ def requisitar_com_retry(
     for tentativa in range(1, max_tentativas + 1):
         token = obter_token_fn(forcar_renovacao=(tentativa > 1))
         headers = headers_fn(token)
-        resposta = httpx.request(metodo, url, headers=headers, timeout=30, **kwargs)
+        resposta = _CLIENTE.request(metodo, url, headers=headers, **kwargs)
 
         if resposta.status_code != 401:
             return resposta

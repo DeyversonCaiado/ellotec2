@@ -231,7 +231,7 @@ class TestTimeline:
         edição."""
         nota = entrega_service.registrar_nota(sessao_db, _dados_nota(empresa))
         primeira = entrega_service.registrar_interacao(
-            sessao_db, nota.id, InteracaoCriarSchema(status="aguardando_embarque"), operador.id
+            sessao_db, nota.id, InteracaoCriarSchema(status="com_ocorrencia"), operador.id
         )
         id_antiga = primeira.interacoes[0].id
 
@@ -242,7 +242,7 @@ class TestTimeline:
             sessao_db,
             nota.id,
             id_antiga,
-            InteracaoAtualizarSchema(status="aguardando_embarque", observacao="corrigido"),
+            InteracaoAtualizarSchema(status="com_ocorrencia", observacao="corrigido"),
             operador.id,
         )
 
@@ -1096,3 +1096,82 @@ class TestSugestoesPorCampo:
 
         for campo in ("dataNota", "dataMapa"):
             assert entrega_service.sugestoes_de_campo(sessao_db, campo=campo) is not None
+
+
+class TestStatusDeNascimento:
+    """`aguardando_embarque` é como a nota NASCE, não uma escolha de ninguém.
+
+    A nota que chega pela integração precisa de algum status (a coluna é
+    NOT NULL) e o ERP não tem um — o acompanhamento começa a existir aqui, na
+    primeira interação. Daí as duas regras: a tela mostra "Sem interação"
+    enquanto não houver nenhuma, e o status de nascimento não é oferecido para
+    a pessoa escolher.
+
+    O que se testa aqui é a segunda, que é a que tem barreira de servidor. A
+    primeira é rótulo, e mora no front (`rotuloStatusDaNota`) — o que o backend
+    garante é o dado em que ela se apoia: `qtd_interacoes`.
+    """
+
+    def test_nao_da_para_lancar_interacao_com_o_status_de_nascimento(self):
+        with pytest.raises(ValueError):
+            InteracaoCriarSchema(status="aguardando_embarque", observacao="")
+
+    def test_nao_da_para_corrigir_uma_interacao_para_o_status_de_nascimento(self):
+        """As interações legadas que já têm esse status continuam existindo e
+        sendo exibidas — o que não pode é gravar mais nenhuma assim."""
+        with pytest.raises(ValueError):
+            InteracaoAtualizarSchema(status="aguardando_embarque", observacao="")
+
+    def test_os_demais_status_continuam_aceitos(self):
+        for status in (
+            "com_ocorrencia",
+            "em_transito",
+            "entrega_realizada",
+            "recusada_no_ato",
+            "retida_fiscalizacao",
+            "devolucao_parcial",
+        ):
+            assert InteracaoCriarSchema(status=status, observacao="").status == status
+
+    def test_nota_recem_integrada_nasce_sem_interacao_nenhuma(
+        self, sessao_db, empresa
+    ):
+        """É deste zero que o rótulo "Sem interação" depende."""
+        nota = entrega_service.registrar_nota(sessao_db, _dados_nota(empresa))
+        resposta = entrega_service.montar_resposta(sessao_db, nota)
+
+        assert nota.status_atual == "aguardando_embarque"
+        assert resposta.qtd_interacoes == 0
+
+    def test_a_nota_de_devolucao_tambem_informa_quantas_interacoes_tem(
+        self, sessao_db, empresa, operador
+    ):
+        """O card de devolução é o outro lugar que mostra o estado de uma nota,
+        e sem esta contagem ele seria o único a exibir o status de nascimento
+        como se fosse um fato."""
+        origem = entrega_service.registrar_nota(
+            sessao_db,
+            _dados_nota(empresa, numero_nota="0001", chave_acesso_nota="1" * 44),
+        )
+        devolucao = entrega_service.registrar_nota(
+            sessao_db,
+            _dados_nota(
+                empresa,
+                numero_nota="0002",
+                chave_acesso_nota="2" * 44,
+                chave_acesso_referenciada="1" * 44,
+            ),
+        )
+
+        resposta = entrega_service.montar_resposta(sessao_db, origem)
+        assert [d.qtd_interacoes for d in resposta.notas_devolucao] == [0]
+
+        entrega_service.registrar_interacao(
+            sessao_db,
+            devolucao.id,
+            InteracaoCriarSchema(status="em_transito", observacao="Coletada"),
+            operador.id,
+        )
+
+        resposta = entrega_service.montar_resposta(sessao_db, origem)
+        assert [d.qtd_interacoes for d in resposta.notas_devolucao] == [1]

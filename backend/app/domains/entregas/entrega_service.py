@@ -946,6 +946,9 @@ def _notas_de_devolucao(
             valor_total=float(devolucao.valor_total or 0),
             chave_acesso_nota=devolucao.chave_acesso_nota,
             status_atual=devolucao.status_atual,
+            qtd_interacoes=len(
+                [i for i in devolucao.interacoes if i.sync_deleted_at is None]
+            ),
         )
         # Mais recente primeiro: quando houve mais de uma devolução parcial, a
         # última é a que explica o saldo de hoje.

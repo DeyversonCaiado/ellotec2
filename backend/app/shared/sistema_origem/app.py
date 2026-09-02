@@ -16,16 +16,27 @@ import time
 import traceback
 
 from app.shared.sistema_origem.core.log import get_logger
-from app.shared.sistema_origem.gestcom.sincronizacao import funcionarios, clientes, marcas, produtos, pedidos
+from app.shared.sistema_origem.gestcom.sincronizacao import (
+    funcionarios,
+    clientes,
+    marcas,
+    produtos,
+    pedidos,
+    entregas,
+)
 
 logger = get_logger("sistema_origem")
 
 
 def rotina_sistema_origem():
-    """Sincroniza funcionários, clientes, marcas, produtos e pedidos com a
-    API ELLOTEC, um depois do outro. Falha definitiva num registro derruba a
+    """Sincroniza funcionários, clientes, marcas, produtos, pedidos e entregas
+    com a API ELLOTEC, um depois do outro. Falha definitiva num registro derruba a
     aplicação inteira (ver sincronizar_* em `gestcom/sincronizacao/`) — dado de origem
-    precisa ser corrigido antes de reiniciar."""
+    precisa ser corrigido antes de reiniciar.
+
+    Entregas vem por último porque depende de funcionários (o vendedor da nota)
+    e de empresas já cadastradas — as notas chegam pelo mesmo ciclo, e não
+    adianta mandá-las antes de quem elas referenciam existir aqui."""
     try:
         while True:
             agora = datetime.datetime.now()
@@ -37,6 +48,7 @@ def rotina_sistema_origem():
                 marcas.sincronizar_marcas()
                 produtos.sincronizar_produtos()
                 pedidos.sincronizar_pedidos()
+                entregas.sincronizar_entregas()
             else:
                 # fora do horario permitido, nao faça nada
                 pass

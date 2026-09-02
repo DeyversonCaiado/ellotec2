@@ -10,13 +10,17 @@ import { EntregaService } from '../entrega.service';
 import {
   EntregaNota,
   InteracaoEntrega,
-  STATUS_ENTREGA,
+  STATUS_INTERACAO,
+  STATUS_INTERACAO_PADRAO,
   STATUS_PRAZO,
-  StatusEntrega,
+  StatusInteracao,
   StatusPrazo,
   corStatus,
+  corStatusDaNota,
   marcadorStatus,
+  paraStatusEscolhivel,
   rotuloStatus,
+  rotuloStatusDaNota,
   rotuloTipoNota,
 } from '../entrega.model';
 import { IconComponent } from '../../../shared/ui/icon.component';
@@ -51,12 +55,15 @@ export class EntregaDetalhe implements OnInit {
   /** Preenchido quando o dialog está corrigindo uma interação existente; nulo
    *  quando está lançando uma nova. É o mesmo formulário nos dois casos. */
   editandoId = signal<string | null>(null);
-  formStatus = signal<StatusEntrega>('em_transito');
+  formStatus = signal<StatusInteracao>(STATUS_INTERACAO_PADRAO);
   formObservacao = signal('');
 
-  readonly opcoesStatus = STATUS_ENTREGA;
+  /** O que o dialog oferece: sem o status de nascimento — ver STATUS_INTERACAO. */
+  readonly opcoesStatus = STATUS_INTERACAO;
   readonly rotuloStatus = rotuloStatus;
   readonly corStatus = corStatus;
+  readonly rotuloStatusDaNota = rotuloStatusDaNota;
+  readonly corStatusDaNota = corStatusDaNota;
   readonly marcadorStatus = marcadorStatus;
   readonly rotuloTipoNota = rotuloTipoNota;
 
@@ -92,15 +99,16 @@ export class EntregaDetalhe implements OnInit {
     this.editandoId.set(null);
     // Pré-seleciona o status atual da nota: a maioria das interações confirma
     // ou avança a partir de onde a entrega está, e digitar do zero toda vez é
-    // atrito sem ganho.
-    this.formStatus.set(this.nota()?.statusAtual ?? 'em_transito');
+    // atrito sem ganho. Nota que ainda não tem interação está no status de
+    // nascimento, que o formulário não oferece — aí cai no padrão.
+    this.formStatus.set(paraStatusEscolhivel(this.nota()?.statusAtual ?? ''));
     this.formObservacao.set('');
     this.dialogAberto.set(true);
   }
 
   abrirEdicao(interacao: InteracaoEntrega): void {
     this.editandoId.set(interacao.id);
-    this.formStatus.set(interacao.status);
+    this.formStatus.set(paraStatusEscolhivel(interacao.status));
     this.formObservacao.set(interacao.observacao);
     this.dialogAberto.set(true);
   }

@@ -12,13 +12,12 @@ import {
   EntregaNotaResumo,
   FILTROS_ENTREGA_VAZIOS,
   FiltrosEntrega,
-  STATUS_ENTREGA,
   STATUS_PRAZO,
   StatusPrazo,
-  corStatus,
+  corStatusDaNota,
   lerFiltrosSalvos,
   limparMantendoPeriodo,
-  rotuloStatus,
+  rotuloStatusDaNota,
   rotuloTipoNota,
   salvarFiltros,
   temFiltroAplicado,
@@ -70,9 +69,8 @@ export class EntregaList implements OnInit {
   totalPaginas = computed(() => Math.max(1, Math.ceil(this.total() / POR_PAGINA)));
 
   readonly campos: CampoFiltro[] = CAMPOS_FILTRO;
-  readonly opcoesStatus = STATUS_ENTREGA;
-  readonly rotuloStatus = rotuloStatus;
-  readonly corStatus = corStatus;
+  readonly rotuloStatusDaNota = rotuloStatusDaNota;
+  readonly corStatusDaNota = corStatusDaNota;
   readonly rotuloTipoNota = rotuloTipoNota;
 
   /** Quantos campos do painel têm valor escolhido — o número no botão que abre

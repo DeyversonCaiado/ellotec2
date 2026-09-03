@@ -5,6 +5,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { ExpedicaoService } from '../expedicao.service';
 import {
   CredencialGerente,
+  FinalizacaoSistemaOrigem,
   PedidoExpedicaoDetalhe,
   SituacaoProcesso,
   TipoProcesso,
@@ -12,6 +13,7 @@ import {
   rotuloTipo,
 } from '../expedicao.model';
 import { SenhaGerenteComponent } from '../senha-gerente.component';
+import { FinalizarPedidoComponent } from '../finalizar-pedido.component';
 import { IconComponent } from '../../../shared/ui/icon.component';
 import { PermissaoDirective } from '../../../core/permissions/permissao.directive';
 import { AuthService } from '../../../core/auth/auth.service';
@@ -19,7 +21,14 @@ import { AuthService } from '../../../core/auth/auth.service';
 @Component({
   selector: 'app-expedicao-pedido',
   standalone: true,
-  imports: [CommonModule, RouterLink, IconComponent, PermissaoDirective, SenhaGerenteComponent],
+  imports: [
+    CommonModule,
+    RouterLink,
+    IconComponent,
+    PermissaoDirective,
+    SenhaGerenteComponent,
+    FinalizarPedidoComponent,
+  ],
   templateUrl: './expedicao-pedido.html',
 })
 export class ExpedicaoPedido implements OnInit {
@@ -61,6 +70,62 @@ export class ExpedicaoPedido implements OnInit {
 
   readonly numeroExibicao = numeroExibicao;
   readonly rotuloTipo = rotuloTipo;
+
+  // ---------------------------------------------------------------------
+  // Finalizar o pedido no ERP, da tela do pedido
+  //
+  // O caminho normal é o modal que abre sozinho no fim da conferência
+  // (`expedicao-itens`). Aqui é o caminho de VOLTA: se o Oracle estava fora
+  // do ar naquela hora, o pedido fica conferido aqui e aberto lá, e sem este
+  // botão não haveria como tentar de novo sem resetar a conferência inteira.
+  // ---------------------------------------------------------------------
+
+  modalFinalizar = signal(false);
+  finalizandoPedido = signal(false);
+  erroFinalizar = signal<string | null>(null);
+
+  precisaFinalizarOrigem = computed(() => {
+    const pedido = this.pedido();
+    return (
+      !!pedido &&
+      pedido.conferencia.status === 'finalizada' &&
+      !pedido.conferencia.finalizadoOrigemEm &&
+      !!this.auth.usuario()?.permissoes.has('expedicao.finalizar_origem')
+    );
+  });
+
+  abrirModalFinalizar(): void {
+    this.erroFinalizar.set(null);
+    this.modalFinalizar.set(true);
+  }
+
+  fecharModalFinalizar(): void {
+    if (this.finalizandoPedido()) return;
+    this.modalFinalizar.set(false);
+  }
+
+  finalizarPedido(dados: FinalizacaoSistemaOrigem): void {
+    const pedido = this.pedido();
+    if (!pedido || this.finalizandoPedido()) return;
+
+    this.finalizandoPedido.set(true);
+    this.erroFinalizar.set(null);
+    this.service.finalizarPedido(pedido.pedidoId, dados).subscribe({
+      next: () => {
+        this.finalizandoPedido.set(false);
+        this.modalFinalizar.set(false);
+        this.carregar();
+      },
+      error: (resposta: HttpErrorResponse) => {
+        this.finalizandoPedido.set(false);
+        // Dentro do modal e com o que foi digitado preservado — o caso comum é
+        // tentar de novo, e redigitar os quatro números seria trabalho à toa.
+        this.erroFinalizar.set(
+          resposta.error?.detail ?? 'Não foi possível finalizar o pedido no sistema de origem.',
+        );
+      },
+    });
+  }
 
   ngOnInit(): void {
     this.carregar();

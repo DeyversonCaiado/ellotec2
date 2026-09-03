@@ -68,6 +68,13 @@ export const routes: Routes = [
           import('./domains/enderecamento/enderecamento.routes').then((m) => m.ENDERECAMENTO_ROUTES),
       },
       {
+        path: 'sistema-origem',
+        loadChildren: () =>
+          import('./domains/sistema-origem/sistema-origem.routes').then(
+            (m) => m.SISTEMA_ORIGEM_ROUTES,
+          ),
+      },
+      {
         path: 'cotacoes',
         loadChildren: () =>
           import('./domains/cotacoes/cotacao.routes').then((m) => m.COTACOES_ROUTES),

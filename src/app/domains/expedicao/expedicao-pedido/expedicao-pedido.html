@@ -322,6 +322,35 @@
             <app-icon name="barcode" class="size-5" />
             {{ rotuloAcao() }}
           </button>
+        } @else if (precisaFinalizarOrigem()) {
+          <!-- A conferência fechou aqui, o pedido continua aberto no ERP. É o
+               caminho de volta quando o Oracle estava fora do ar na hora em
+               que o operador terminou de bipar — sem ele, o pedido ficaria
+               conferido de um lado e PED do outro, sem nada a fazer na tela. -->
+          <p class="text-center text-sm text-amber-700 dark:text-amber-300 mb-2">
+            Conferência concluída, mas o pedido ainda não foi fechado no sistema de origem.
+          </p>
+          @if (p.conferencia.motivoFalhaOrigem) {
+            <p class="text-center text-sm text-amber-700 dark:text-amber-300 mb-2">
+              {{ p.conferencia.motivoFalhaOrigem }}
+            </p>
+          }
+          @if (p.conferencia.tentativaOrigemUsuarioNome) {
+            <p class="text-center text-xs text-amber-700 dark:text-amber-300 mb-2">
+              Última tentativa: {{ p.conferencia.tentativaOrigemUsuarioNome }}
+              @if (p.conferencia.tentativaOrigemEm) {
+                em {{ p.conferencia.tentativaOrigemEm | date: 'dd/MM/yyyy HH:mm' }}
+              }
+            </p>
+          }
+          <button
+            type="button"
+            (click)="abrirModalFinalizar()"
+            class="w-full inline-flex items-center justify-center gap-2 text-base font-semibold bg-brand-600 text-white rounded-lg px-4 py-3.5 hover:bg-brand-700"
+          >
+            <app-icon name="truck" class="size-5" />
+            Finalizar pedido no sistema de origem
+          </button>
         } @else {
           <p class="text-center text-sm font-semibold text-emerald-700">
             Separação e conferência concluídas.
@@ -329,6 +358,16 @@
         }
       </div>
     </div>
+
+    @if (modalFinalizar()) {
+      <app-finalizar-pedido
+        [pedidoNumero]="numeroExibicao(p)"
+        [erro]="erroFinalizar()"
+        [ocupado]="finalizandoPedido()"
+        (confirmado)="finalizarPedido($event)"
+        (cancelar)="fecharModalFinalizar()"
+      />
+    }
 
     @if (resetando(); as tipo) {
       <app-senha-gerente

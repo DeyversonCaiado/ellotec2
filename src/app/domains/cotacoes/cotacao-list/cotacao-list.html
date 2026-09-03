@@ -176,15 +176,18 @@
                   <p class="text-sm text-gray-800 dark:text-gray-100 truncate" [title]="item.produtoHospital ?? ''">{{ item.produtoHospital || '—' }}</p>
                   <p class="text-xs font-mono text-gray-400 dark:text-gray-500">{{ item.codigoProdutoHospital }}</p>
                 </td>
+                <!-- `1.0-4`: sem casas quando o número é inteiro (120, não
+                     120,0000) e até 4 quando houver fração — as colunas do
+                     OuroWeb são numeric(4), e a unidade pode ser fracionada. -->
                 <td class="px-5 py-3.5 align-top text-sm text-end text-gray-800 dark:text-gray-100">
-                  {{ item.quantidadeSolicitada }}
+                  {{ item.quantidadeSolicitada | number: '1.0-4' }}
                   <span class="block text-xs text-gray-400 dark:text-gray-500">{{ item.unidade }}</span>
                 </td>
                 <td class="px-5 py-3.5 align-top text-sm text-end">
                   @if (naoRespondido(item)) {
                     <span class="text-xs font-semibold text-amber-600 dark:text-amber-400">não cotado</span>
                   } @else {
-                    <span class="text-gray-800 dark:text-gray-100">{{ item.quantidadeRespondida }}</span>
+                    <span class="text-gray-800 dark:text-gray-100">{{ item.quantidadeRespondida | number: '1.0-4' }}</span>
                   }
                 </td>
                 <td class="px-5 py-3.5 align-top text-sm text-end font-semibold text-gray-800 dark:text-gray-100">

@@ -7,7 +7,6 @@ sistema, lido em modo somente leitura.
 """
 
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -65,11 +64,19 @@ class CotacaoItemSchema(ContratoBase):
     empresa: str | None = None
     codigo_produto_hospital: str | None = None
     produto_hospital: str | None = None
-    quantidade_solicitada: Decimal | None = None
-    quantidade_respondida: Decimal | None = None
-    quantidade_faturada: Decimal | None = None
+    # `float` e não `Decimal` porque este é contrato de SAÍDA: o Pydantic
+    # serializa Decimal como STRING no JSON ("200.0000"), e o front recebia
+    # esse texto e o imprimia cru na tela. Mesma convenção de
+    # `pedido_contrato.py` e `estoque_contrato.py`, onde os schemas de resposta
+    # usam float justamente para o JSON trazer number.
+    #
+    # As colunas do OuroWeb são numeric com 4 casas, então o valor chega como
+    # 200.0000 — quem decide quantas casas mostrar é a tela, não o banco.
+    quantidade_solicitada: float | None = None
+    quantidade_respondida: float | None = None
+    quantidade_faturada: float | None = None
     unidade: str | None = None
-    preco_unitario: Decimal | None = None
+    preco_unitario: float | None = None
 
 
 class CotacaoFiltrosSchema(ContratoBase):

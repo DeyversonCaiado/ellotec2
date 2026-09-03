@@ -66,3 +66,20 @@ def obter_id_por_sistema_origem_id(sessao_db: Session, sistema_origem_id: str) -
         .first()
     )
     return empresa.id if empresa else None
+
+
+def obter_sistema_origem_id(sessao_db: Session, empresa_id: str) -> str | None:
+    """O caminho inverso de `obter_id_por_sistema_origem_id`: o código da
+    empresa no ERP a partir do nosso id.
+
+    É LEITURA do campo de vínculo, não escrita — a regra de nunca apagar
+    `sistema_origem_id` (ver ARCHITECTURE.md) não se aplica aqui. Existe porque
+    o ERP identifica o pedido por EMPRESA_ID + PEDIDO, e os dois códigos são
+    dele, não nossos.
+    """
+    empresa = (
+        sessao_db.query(Empresa)
+        .filter(Empresa.id == empresa_id, Empresa.sync_deleted_at.is_(None))
+        .first()
+    )
+    return empresa.sistema_origem_id if empresa else None

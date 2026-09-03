@@ -12,6 +12,7 @@ from app.domains.expedicao.expedicao_contrato import (
     BiparSchema,
     CredencialGerenteSchema,
     FinalizarItemSchema,
+    FinalizarNoSistemaOrigemSchema,
     OperadorSchema,
     PedidoExpedicaoDetalheSchema,
     PedidoExpedicaoListaPaginadaSchema,
@@ -355,3 +356,28 @@ def resetar(
     _ctx: ContextoRequisicao = Depends(exigir_permissao("expedicao.resetar")),
 ) -> None:
     expedicao_service.resetar(sessao_db, tipo, processo_id, dados)
+
+
+@router.post(
+    "/conferencia/pedidos/{pedido_id}/finalizar-sistema-origem",
+    response_model=ProcessoRespostaSchema,
+    summary="Fecha no ERP o pedido cuja conferência já terminou aqui",
+)
+def finalizar_no_sistema_origem(
+    pedido_id: str,
+    dados: FinalizarNoSistemaOrigemSchema,
+    sessao_db: Session = Depends(obter_sessao),
+    ctx: ContextoRequisicao = Depends(exigir_permissao("expedicao.finalizar_origem")),
+) -> ProcessoRespostaSchema:
+    """Só existe para a conferência, então o tipo é fixo na URL e não path param:
+    não há o que fechar no ERP ao terminar uma separação, e um
+    `/{tipo}/...` aqui ofereceria uma rota que só dá erro na metade dos casos.
+
+    Permissão própria (`expedicao.finalizar_origem`) e não `conferencia.executar`:
+    conferir é trabalho de galpão, mudar o status do pedido no ERP é ato
+    administrativo — o galpão inteiro poder fazer isso é decisão que ninguém
+    tomou, e o default seguro é separar as duas chaves.
+    """
+    return expedicao_service.finalizar_no_sistema_origem(
+        sessao_db, pedido_id, ctx.usuario.id, dados
+    )

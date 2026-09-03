@@ -844,3 +844,20 @@ Não trate esses itens como bugs ("o link não funciona") nem como features
 faltando — eles são propositalmente não-funcionais. Se algum desses vier a
 virar feature real no futuro, vira um domínio novo seguindo o mesmo padrão
 de `domains/`.
+
+### Uma tela vazia que NÃO é decoração: `sistema-origem`
+
+`domains/sistema-origem/` tem rota real (`/sistema-origem`), chave de permissão
+real (`sistema_origem.acessar`) e uma página que hoje não faz nada além de
+explicar isso ao usuário. A diferença para os itens fictícios acima é que o
+domínio **existe de verdade no backend** e já tem função em produção: fechar o
+pedido no ERP depois da conferência.
+
+Essa função é usada de dentro da expedição — no modal que abre quando a
+conferência termina —, e é ali que ela deve ficar: quem finaliza é o operador do
+galpão, no fluxo dele, não alguém que foi procurar uma tela de administração.
+
+A página existe para o domínio ter menu, rota e permissão desde o começo, e para
+as próximas operações do ERP terem onde morar em vez de nascerem espalhadas por
+outros domínios. Ver `backend/ARCHITECTURE.md` → "Domínio que ESCREVE no sistema
+de origem".

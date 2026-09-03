@@ -29,6 +29,17 @@ export interface SituacaoProcesso {
   usuarioGestorFimNome: string | null;
   /** Derivado dos dois acima pelo backend — a tela não recalcula. */
   delegado: boolean;
+  /** Quando o ERP aceitou a baixa do pedido (status FEC). Nulo = a conferência
+   *  fechou aqui mas o pedido continua aberto lá. Só a conferência tem: não há
+   *  o que fechar no sistema de origem ao terminar uma separação. */
+  finalizadoOrigemEm: string | null;
+  /** Por que a última tentativa de finalizar no ERP foi recusada. */
+  motivoFalhaOrigem: string | null;
+  /** Quem tentou e quando, na última tentativa — deu certo ou não. Responde
+   *  "quem tentou fechar este pedido, e a que horas?" sem depender de ninguém
+   *  lembrar da mensagem que viu na tela. */
+  tentativaOrigemEm: string | null;
+  tentativaOrigemUsuarioNome: string | null;
 }
 
 /**
@@ -291,7 +302,29 @@ export interface Processo {
   usuarioGestorFimNome: string | null;
   dataInicio: string | null;
   dataFim: string | null;
+  /** Mesmos quatro campos de SituacaoProcesso — ver lá. */
+  finalizadoOrigemEm: string | null;
+  motivoFalhaOrigem: string | null;
+  tentativaOrigemEm: string | null;
+  tentativaOrigemUsuarioNome: string | null;
   itens: ItemProcesso[];
+}
+
+/**
+ * Os quatro números que o ERP pede para fechar o pedido. Não saem de lugar
+ * nenhum do sistema: só existem depois de a mercadoria estar embalada, e é o
+ * operador quem digita, no modal que abre quando a conferência termina.
+ */
+export interface FinalizacaoSistemaOrigem {
+  /** Quantidade de volumes. Sempre inteiro — no ERP a coluna é texto
+   *  (`VARCHAR2(10)`) e guarda dígitos, sem separador decimal. */
+  volume: number;
+  /** Espécie da embalagem — até 10 caracteres maiúsculos (CX, FD, SC, CAIXA…),
+   *  que é o tamanho da coluna no ERP. */
+  especie: string;
+  /** Em quilos. */
+  pesoLiquido: number;
+  pesoBruto: number;
 }
 
 export interface CredencialGerente {

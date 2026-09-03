@@ -235,7 +235,24 @@ export const ESTRUTURA_APP: SecaoApp[] = [
                 label: 'Liberar pedido com endereçamento inconsistente',
                 chave: 'expedicao.enderecamento.liberar',
               },
+              {
+                label: 'Finalizar pedido no sistema de origem',
+                chave: 'expedicao.finalizar_origem',
+              },
             ],
+          },
+          {
+            // Domínio que ESCREVE no ERP (GESTCOM). A tela é uma casca por
+            // enquanto: a única operação existente — finalizar o pedido depois
+            // da conferência — é usada de dentro da expedição, no fluxo do
+            // operador. O módulo está aqui para o domínio ter menu, rota e
+            // chave desde o começo, e para as próximas operações do ERP terem
+            // onde morar. Ver backend/ARCHITECTURE.md → "Domínio que ESCREVE
+            // no sistema de origem".
+            rotulo: 'Sistema de origem',
+            icone: 'rotate',
+            rota: '/sistema-origem',
+            acoes: [{ label: 'Acessar', chave: 'sistema_origem.acessar' }],
           },
         ],
       },

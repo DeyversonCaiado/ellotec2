@@ -94,6 +94,16 @@ PERMISSOES_VALIDAS: list[str] = [
     # quem responde pelo galpão. Não libera o botão do operador — só a execução
     # delegada. Ver "A exceção" em domains/expedicao/EXECUCAO_DELEGADA.md.
     "expedicao.enderecamento.liberar",
+    # Fechar o pedido no ERP depois da conferência (status FEC + volumes e
+    # pesos). Chave separada de `expedicao.conferencia.executar` de propósito:
+    # conferir é trabalho de galpão, mudar o status do pedido no sistema de
+    # origem é ato administrativo, e quem faz um não faz o outro por tabela.
+    "expedicao.finalizar_origem",
+    # --- Sistema de origem (ERP) ---
+    # Domínio que ESCREVE no GESTCOM. Hoje a única função dele é consumida de
+    # dentro da expedição, e a tela própria existe só para o domínio ter lugar
+    # no menu enquanto as outras funções não chegam.
+    "sistema_origem.acessar",
     # --- Inteligência de Mercado / Cotações ---
     # Domínio de CONSULTA a banco externo (OuroWeb): só existe "acessar",
     # porque não há nada para incluir, editar ou apagar. Ver

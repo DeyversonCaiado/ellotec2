@@ -74,6 +74,16 @@ export type PermissaoKey =
   | 'expedicao.atribuir'
   | 'expedicao.delegar'
   | 'expedicao.enderecamento.liberar'
+  // Fechar o pedido no ERP depois da conferência (status FEC + volumes e
+  // pesos). Chave separada de `expedicao.conferencia.executar` de propósito:
+  // conferir é trabalho de galpão, mudar o status do pedido no sistema de
+  // origem é ato administrativo.
+  | 'expedicao.finalizar_origem'
+  // --- Sistema de origem (ERP) ---
+  // Domínio que ESCREVE no GESTCOM. A única função de hoje é consumida de
+  // dentro da expedição; a tela própria existe para o domínio ter lugar no
+  // menu enquanto as outras funções não chegam.
+  | 'sistema_origem.acessar'
   // --- Inteligência de Mercado / Cotações ---
   // Domínio de CONSULTA a banco externo (OuroWeb): só existe "acessar",
   // porque não há nada para incluir, editar ou apagar.

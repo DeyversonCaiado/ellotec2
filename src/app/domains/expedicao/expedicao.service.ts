@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
 import {
   CredencialGerente,
+  FinalizacaoSistemaOrigem,
   FiltrosPedidoExpedicao,
   Operador,
   PedidoExpedicaoDetalhe,
@@ -167,6 +168,24 @@ export class ExpedicaoService {
     return this.http.post<Processo>(
       `${ENDPOINT}/${tipo}/${processoId}/itens/${pedidoItemId}/finalizar`,
       credencial ?? {},
+    );
+  }
+
+  /** Fecha no ERP o pedido cuja conferência já terminou aqui: grava o status
+   *  `FEC`, o conferidor, os volumes e os pesos.
+   *
+   *  É um passo próprio, e não um efeito do último item bipado, porque os
+   *  quatro números só existem depois de a mercadoria estar embalada — e
+   *  porque o Oracle pode estar fora do ar no minuto em que o operador termina.
+   *  Nesse caso o trabalho do galpão não se perde: a conferência continua
+   *  finalizada aqui e o botão continua disponível para tentar de novo.
+   *
+   *  Só existe para a conferência: não há o que fechar no ERP ao terminar uma
+   *  separação, e por isso o tipo não é parâmetro. */
+  finalizarPedido(pedidoId: string, dados: FinalizacaoSistemaOrigem): Observable<Processo> {
+    return this.http.post<Processo>(
+      `${ENDPOINT}/conferencia/pedidos/${pedidoId}/finalizar-sistema-origem`,
+      dados,
     );
   }
 

@@ -18,6 +18,35 @@ def obter_id_por_sistema_origem_id(sessao_db: Session, sistema_origem_id: str) -
     return usuario.id if usuario else None
 
 
+def obter_sistema_origem_id(sessao_db: Session, usuario_id: str) -> str | None:
+    """O caminho inverso de `obter_id_por_sistema_origem_id`: o código do
+    funcionário no ERP a partir do nosso id.
+
+    É LEITURA do campo de vínculo, não escrita — a regra de nunca apagar
+    `sistema_origem_id` (ver ARCHITECTURE.md) não se aplica aqui. Existe porque
+    o ERP grava a conferência em nome de um código de funcionário DELE, e o
+    usuário logado é o nosso.
+    """
+    usuario = (
+        sessao_db.query(Usuario)
+        .filter(Usuario.id == usuario_id, Usuario.sync_deleted_at.is_(None))
+        .first()
+    )
+    return usuario.sistema_origem_id if usuario else None
+
+
+def obter_login(sessao_db: Session, usuario_id: str) -> str | None:
+    """O login do usuário — o que ele digita para entrar, não o nome de
+    exibição. Existe para mensagem de erro poder dizer de qual CONTA está
+    falando quando a pessoa tem mais de uma."""
+    usuario = (
+        sessao_db.query(Usuario)
+        .filter(Usuario.id == usuario_id, Usuario.sync_deleted_at.is_(None))
+        .first()
+    )
+    return usuario.usuario if usuario else None
+
+
 def obter_nomes(sessao_db: Session, usuario_ids: list[str]) -> dict[str, str]:
     """usuario_id -> nome, numa consulta só. Para telas em lista, onde um
     `obter_nome` por linha viraria dezenas de idas ao banco por página."""

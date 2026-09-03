@@ -13,6 +13,7 @@ from collections.abc import Generator
 from datetime import date, datetime, timezone  # noqa: F401  usado nos testes de período
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.pool import StaticPool
@@ -30,6 +31,7 @@ from app.domains.enderecamento.enderecamento_model import (
     EstoqueEnderecoLote,
 )
 from app.domains.estoque.estoque_model import EstoqueLote
+from app.domains.expedicao import expedicao_service
 from app.domains.expedicao.expedicao_model import ExpedicaoAtribuicao, Separacao
 from app.domains.marcas.marca_model import Marca
 from app.domains.pedidos import pedido_publico, pedido_service
@@ -2657,3 +2659,191 @@ class TestLiberarEnderecamento:
         assert detalhe["podeIniciar"] is False
         assert detalhe["statusPermiteIniciar"] is True
         assert "Endereçamento insuficiente" in detalhe["bloqueioEnderecamento"]
+
+
+# ---------------------------------------------------------------------------
+# Finalizar o pedido no sistema de origem (ERP)
+#
+# O Oracle do GESTCOM é base de PRODUÇÃO — nenhum teste daqui fala com ele. O
+# que é exercitado é tudo o que acontece do lado de cá: a permissão, as
+# pré-condições, a ordem dos commits e, principalmente, o que fica GRAVADO na
+# conferência quando o ERP recusa. Essa gravação é o que responde, dias depois,
+# "por que este pedido está conferido aqui e aberto lá?".
+# ---------------------------------------------------------------------------
+
+
+ROTA_FINALIZAR = "/expedicao/conferencia/pedidos/{}/finalizar-sistema-origem"
+
+EMBARQUE = {"volume": 4, "especie": "cx", "pesoLiquido": 12.5, "pesoBruto": 13.2}
+
+
+def _conferir_tudo(client, cenario) -> None:
+    """Deixa o pedido conferido: separação e conferência fechadas."""
+    assert _atribuir(client, cenario.pedido_id, "separacao", cenario.outro_id).status_code == 204
+    assert _iniciar_delegado(client, "separacao", cenario.pedido_id).status_code == 200
+    assert _finalizar_delegado(client, "separacao", cenario.pedido_id).status_code == 200
+    assert _iniciar_delegado(client, "conferencia", cenario.pedido_id).status_code == 200
+    assert _finalizar_delegado(client, "conferencia", cenario.pedido_id).status_code == 200
+
+
+def _permitir_finalizar_origem(sessao, usuario_id: str) -> None:
+    sessao.add(UsuarioPermissao(usuario_id=usuario_id, chave="expedicao.finalizar_origem"))
+    sessao.commit()
+
+
+def _vincular_empresa_ao_erp(sessao, codigo: str = "1") -> None:
+    empresa = sessao.query(Empresa).filter(Empresa.nome_fantasia == "Ellotec").one()
+    empresa.sistema_origem_id = codigo
+    sessao.commit()
+
+
+class TestFinalizarNoSistemaOrigem:
+    def test_sem_a_chave_propria_e_403_mesmo_podendo_conferir(self, ambiente):
+        """Conferir é trabalho de galpão; mudar o status do pedido no ERP é ato
+        administrativo. O usuário do cenário tem todas as chaves de expedição
+        MENOS esta, e é justamente por isso que ele prova a separação."""
+        client, sessao, cenario, _logado = ambiente
+        _vincular_empresa_ao_erp(sessao)
+        _conferir_tudo(client, cenario)
+
+        resposta = client.post(ROTA_FINALIZAR.format(cenario.pedido_id), json=EMBARQUE)
+
+        assert resposta.status_code == 403
+
+    def test_conferencia_ainda_aberta_nao_pode_ser_finalizada(self, ambiente):
+        client, sessao, cenario, logado = ambiente
+        _permitir_finalizar_origem(sessao, logado["id"])
+        _vincular_empresa_ao_erp(sessao)
+        assert _iniciar_delegado(client, "separacao", cenario.pedido_id).status_code == 200
+        assert _finalizar_delegado(client, "separacao", cenario.pedido_id).status_code == 200
+        assert _iniciar_delegado(client, "conferencia", cenario.pedido_id).status_code == 200
+
+        resposta = client.post(ROTA_FINALIZAR.format(cenario.pedido_id), json=EMBARQUE)
+
+        assert resposta.status_code == 409
+        assert "Termine a conferência" in resposta.json()["detail"]
+
+    def test_empresa_sem_vinculo_no_erp_nem_chega_a_falar_com_o_oracle(self, ambiente, monkeypatch):
+        """Sem o código da empresa no ERP não há como identificar o pedido lá —
+        e seguir assim daria a baixa no pedido de outra filial."""
+        client, sessao, cenario, logado = ambiente
+        _permitir_finalizar_origem(sessao, logado["id"])
+        _conferir_tudo(client, cenario)
+
+        chamou = []
+        monkeypatch.setattr(
+            expedicao_service.sistema_origem_publico,
+            "finalizar_pedido",
+            lambda **kwargs: chamou.append(kwargs),
+        )
+
+        resposta = client.post(ROTA_FINALIZAR.format(cenario.pedido_id), json=EMBARQUE)
+
+        assert resposta.status_code == 409
+        assert "A empresa do pedido" in resposta.json()["detail"]
+        assert chamou == []
+
+    def test_caminho_feliz_grava_o_instante_e_bloqueia_a_segunda_vez(self, ambiente, monkeypatch):
+        client, sessao, cenario, logado = ambiente
+        _permitir_finalizar_origem(sessao, logado["id"])
+        _vincular_empresa_ao_erp(sessao, "7")
+        _conferir_tudo(client, cenario)
+
+        recebido = {}
+        monkeypatch.setattr(
+            expedicao_service.sistema_origem_publico,
+            "finalizar_pedido",
+            lambda **kwargs: recebido.update(kwargs),
+        )
+
+        resposta = client.post(ROTA_FINALIZAR.format(cenario.pedido_id), json=EMBARQUE)
+
+        assert resposta.status_code == 200, resposta.text
+        assert resposta.json()["finalizadoOrigemEm"] is not None
+        assert resposta.json()["motivoFalhaOrigem"] is None
+        # Os três códigos que identificam o registro no ERP saem daqui, não do
+        # front: empresa e pedido do vínculo, funcionário do usuário logado.
+        assert recebido["empresa_sistema_origem_id"] == "7"
+        assert recebido["pedido_sistema_origem_id"] == "0185972"
+        # A maiúscula é responsabilidade do outro lado da borda, não daqui.
+        assert recebido["especie"] == "cx"
+
+        # No sucesso o par de tentativa NÃO é limpo: ele passa a responder
+        # "quem fechou o pedido", que é a informação que sobra sendo útil.
+        assert resposta.json()["tentativaOrigemUsuarioNome"] is not None
+        assert resposta.json()["tentativaOrigemEm"] is not None
+
+        # A tela do pedido enxerga o mesmo.
+        pedido = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+        assert pedido["conferencia"]["finalizadoOrigemEm"] is not None
+        assert pedido["conferencia"]["tentativaOrigemUsuarioNome"] is not None
+
+        # Segunda tentativa não repete a baixa no ERP.
+        recebido.clear()
+        repetida = client.post(ROTA_FINALIZAR.format(cenario.pedido_id), json=EMBARQUE)
+        assert repetida.status_code == 409
+        assert "já foi finalizado" in repetida.json()["detail"]
+        assert recebido == {}
+
+    def test_recusa_do_erp_fica_gravada_na_conferencia(self, ambiente, monkeypatch):
+        """O caso que as colunas novas existem para resolver: a conferência
+        continua valendo aqui, o pedido continua aberto lá, e o motivo fica
+        registrado — sem depender de o operador lembrar da mensagem."""
+        client, sessao, cenario, logado = ambiente
+        _permitir_finalizar_origem(sessao, logado["id"])
+        _vincular_empresa_ao_erp(sessao)
+        _conferir_tudo(client, cenario)
+
+        def recusar(**_kwargs):
+            raise HTTPException(status_code=409, detail="O pedido está como FAT no ERP.")
+
+        monkeypatch.setattr(expedicao_service.sistema_origem_publico, "finalizar_pedido", recusar)
+
+        resposta = client.post(ROTA_FINALIZAR.format(cenario.pedido_id), json=EMBARQUE)
+
+        assert resposta.status_code == 409
+        pedido = client.get(f"/expedicao/pedidos/{cenario.pedido_id}").json()
+        assert pedido["conferencia"]["status"] == "finalizada"
+        assert pedido["conferencia"]["finalizadoOrigemEm"] is None
+        assert pedido["conferencia"]["motivoFalhaOrigem"] == "O pedido está como FAT no ERP."
+        # Quem tentou fica registrado junto com o motivo — é o par que responde
+        # "quem tentou fechar este pedido, e a que horas?".
+        assert pedido["conferencia"]["tentativaOrigemUsuarioNome"] is not None
+        assert pedido["conferencia"]["tentativaOrigemEm"] is not None
+
+    def test_sucesso_depois_de_uma_recusa_limpa_o_motivo(self, ambiente, monkeypatch):
+        client, sessao, cenario, logado = ambiente
+        _permitir_finalizar_origem(sessao, logado["id"])
+        _vincular_empresa_ao_erp(sessao)
+        _conferir_tudo(client, cenario)
+
+        def recusar(**_kwargs):
+            raise HTTPException(status_code=503, detail="Oracle fora do ar.")
+
+        monkeypatch.setattr(expedicao_service.sistema_origem_publico, "finalizar_pedido", recusar)
+        fora_do_ar = client.post(ROTA_FINALIZAR.format(cenario.pedido_id), json=EMBARQUE)
+        assert fora_do_ar.status_code == 503
+
+        monkeypatch.setattr(
+            expedicao_service.sistema_origem_publico, "finalizar_pedido", lambda **_k: None
+        )
+        resposta = client.post(ROTA_FINALIZAR.format(cenario.pedido_id), json=EMBARQUE)
+
+        assert resposta.status_code == 200, resposta.text
+        assert resposta.json()["motivoFalhaOrigem"] is None
+        assert resposta.json()["finalizadoOrigemEm"] is not None
+
+    def test_volume_zero_e_recusado_no_contrato(self, ambiente, monkeypatch):
+        client, sessao, cenario, logado = ambiente
+        _permitir_finalizar_origem(sessao, logado["id"])
+        _vincular_empresa_ao_erp(sessao)
+        _conferir_tudo(client, cenario)
+        monkeypatch.setattr(
+            expedicao_service.sistema_origem_publico, "finalizar_pedido", lambda **_k: None
+        )
+
+        resposta = client.post(
+            ROTA_FINALIZAR.format(cenario.pedido_id), json={**EMBARQUE, "volume": 0}
+        )
+
+        assert resposta.status_code == 422

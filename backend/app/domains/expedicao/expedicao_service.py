@@ -36,6 +36,7 @@ from app.domains.expedicao.expedicao_contrato import (
     CredencialGerenteSchema,
     EnderecoItemSchema,
     FinalizarItemSchema,
+    FinalizarNoSistemaOrigemSchema,
     ItemPedidoExpedicaoSchema,
     ItemProcessoRespostaSchema,
     OperadorSchema,
@@ -56,6 +57,7 @@ from app.domains.expedicao.expedicao_model import (
 )
 from app.domains.pedidos import pedido_publico
 from app.domains.produtos import produto_publico
+from app.domains.sistema_origem import sistema_origem_publico
 from app.domains.usuarios import usuario_publico
 from app.shared.sync_helpers import incrementar_versao, marcar_apagado
 
@@ -284,6 +286,14 @@ def _situacao(
         usuario_gestor_inicio_nome=nomes_gestor.get(processo.usuario_gestor_inicio_id),
         usuario_gestor_fim_nome=nomes_gestor.get(processo.usuario_gestor_fim_id),
         delegado=bool(processo.usuario_gestor_inicio_id or processo.usuario_gestor_fim_id),
+        # Só a conferência tem as colunas — ver o mesmo getattr em
+        # `_para_resposta_processo`.
+        finalizado_origem_em=getattr(processo, "finalizado_origem_em", None),
+        motivo_falha_origem=getattr(processo, "motivo_falha_origem", None),
+        tentativa_origem_em=getattr(processo, "tentativa_origem_em", None),
+        tentativa_origem_usuario_nome=_nome_gestor(
+            sessao_db, getattr(processo, "tentativa_origem_usuario_id", None)
+        ),
     )
 
 
@@ -327,6 +337,9 @@ def _situacoes_da_pagina(
                 processo.usuario_inicio_id,
                 processo.usuario_gestor_inicio_id,
                 processo.usuario_gestor_fim_id,
+                # Só a conferência tem — na separação o getattr devolve None e
+                # o `if` abaixo descarta, sem consulta a mais.
+                getattr(processo, "tentativa_origem_usuario_id", None),
             )
             if id_usuario
         ],
@@ -362,6 +375,12 @@ def _situacoes_da_pagina(
             usuario_gestor_inicio_nome=nomes.get(processo.usuario_gestor_inicio_id),
             usuario_gestor_fim_nome=nomes.get(processo.usuario_gestor_fim_id),
             delegado=bool(processo.usuario_gestor_inicio_id or processo.usuario_gestor_fim_id),
+            finalizado_origem_em=getattr(processo, "finalizado_origem_em", None),
+            motivo_falha_origem=getattr(processo, "motivo_falha_origem", None),
+            tentativa_origem_em=getattr(processo, "tentativa_origem_em", None),
+            tentativa_origem_usuario_nome=nomes.get(
+                getattr(processo, "tentativa_origem_usuario_id", None)
+            ),
         )
     return situacoes
 
@@ -1346,6 +1365,15 @@ def _para_resposta_processo(
         usuario_gestor_fim_nome=_nome_gestor(sessao_db, processo.usuario_gestor_fim_id),
         data_inicio=processo.data_inicio,
         data_fim=processo.data_fim,
+        # getattr porque só `Conferencia` tem as colunas: na separação não há
+        # nada a fechar no ERP, e criar as mesmas duas colunas lá só para o
+        # acesso ficar simétrico seria schema por conveniência de código.
+        finalizado_origem_em=getattr(processo, "finalizado_origem_em", None),
+        motivo_falha_origem=getattr(processo, "motivo_falha_origem", None),
+        tentativa_origem_em=getattr(processo, "tentativa_origem_em", None),
+        tentativa_origem_usuario_nome=_nome_gestor(
+            sessao_db, getattr(processo, "tentativa_origem_usuario_id", None)
+        ),
         itens=[
             _item_do_processo(
                 item,
@@ -1993,3 +2021,122 @@ def resetar(
         _gravar_status(sessao_db, processo.pedido_id, pedido_publico.STATUS_SEPARADO)
 
     sessao_db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Baixa no sistema de origem (ERP)
+#
+# A conferência fechar AQUI e o pedido fechar LÁ são duas coisas separadas, e é
+# por isso que este passo é um clique próprio e não um efeito do último item
+# bipado. Três motivos, todos concretos:
+#
+# 1. O ERP pede quatro números — volumes, espécie, peso líquido e peso bruto —
+#    que só existem depois de a mercadoria estar embalada. Ninguém sabe o peso
+#    bruto enquanto está bipando.
+# 2. O Oracle é outro banco e outra transação. Ele pode estar fora do ar no
+#    exato minuto em que o operador termina, e nesse caso o trabalho do galpão
+#    não pode ser perdido nem repetido — fica conferido aqui, pendente lá, e o
+#    botão continua disponível.
+# 3. A ordem dos commits importa: primeiro o ERP, depois o nosso banco. Se
+#    fosse ao contrário e o ERP recusasse, ficaria gravado aqui que o pedido
+#    foi fechado lá — mentira que só apareceria no faturamento.
+# ---------------------------------------------------------------------------
+
+# Cabe em `expedicao_conferencias.motivo_falha_origem` (VARCHAR 255). Truncar é
+# melhor do que estourar a coluna no meio do registro de uma falha — o texto
+# inteiro continua indo para o operador na resposta HTTP.
+_TAMANHO_MOTIVO_FALHA = 255
+
+
+def _exigir_vinculo(valor: str | None, o_que: str) -> str:
+    """O código no ERP de alguma das três pontas (empresa, pedido, usuário).
+
+    Sem qualquer um deles não há como identificar o registro do outro lado, e
+    seguir assim gravaria a baixa no pedido errado — por isso é 409 e não um
+    valor padrão.
+    """
+    if not (valor or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"{o_que} não tem vínculo com o sistema de origem, então não dá para "
+                "identificar o registro lá. Finalize por dentro do ERP e avise o suporte."
+            ),
+        )
+    return valor.strip()
+
+
+def finalizar_no_sistema_origem(
+    sessao_db: Session,
+    pedido_id: str,
+    usuario_id: str,
+    dados: FinalizarNoSistemaOrigemSchema,
+) -> ProcessoRespostaSchema:
+    """Fecha no ERP o pedido cuja conferência já terminou aqui.
+
+    Devolve a conferência atualizada — a mesma resposta do resto do domínio,
+    para a tela do coletor só substituir o que tem em mão.
+    """
+    conferencia = _processo_vivo(sessao_db, "conferencia", pedido_id)
+    if conferencia is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Este pedido não tem conferência aberta.",
+        )
+    if conferencia.status != "finalizada":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Termine a conferência antes de finalizar o pedido no sistema de origem.",
+        )
+    if conferencia.finalizado_origem_em is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este pedido já foi finalizado no sistema de origem.",
+        )
+
+    pedido = _obter_pedido(sessao_db, pedido_id)
+    empresa_no_erp = _exigir_vinculo(
+        empresa_publico.obter_sistema_origem_id(sessao_db, pedido.empresa_id),
+        "A empresa do pedido",
+    )
+    pedido_no_erp = _exigir_vinculo(pedido.sistema_origem_id, "Este pedido")
+    usuario_no_erp = usuario_publico.obter_sistema_origem_id(sessao_db, usuario_id)
+
+    # Quem clicou e quando, gravado ANTES de falar com o ERP e nos dois
+    # desfechos. O caso que isso resolve é uma recusa que só é explicável pela
+    # conta que clicou (conta administrativa nossa não tem código no ERP) — e
+    # sem estas duas colunas o motivo gravado não dizia de quem era a tentativa.
+    conferencia.tentativa_origem_usuario_id = usuario_id
+    conferencia.tentativa_origem_em = _agora()
+
+    try:
+        sistema_origem_publico.finalizar_pedido(
+            empresa_sistema_origem_id=empresa_no_erp,
+            pedido_sistema_origem_id=pedido_no_erp,
+            usuario_sistema_origem_id=usuario_no_erp or "",
+            volume=dados.volume,
+            especie=dados.especie,
+            peso_liquido=dados.peso_liquido,
+            peso_bruto=dados.peso_bruto,
+            # Só para a mensagem de recusa poder dizer DE QUAL conta está
+            # falando — contas administrativas nossas não têm código no ERP, e
+            # "seu usuário não tem vínculo" sem o login obriga a adivinhar.
+            usuario_login=usuario_publico.obter_login(sessao_db, usuario_id) or "",
+        )
+    except HTTPException as recusa:
+        # A recusa fica GRAVADA antes de subir. É o que responde, dias depois,
+        # "por que este pedido está conferido aqui e aberto lá?" — sem isso a
+        # única pista seria o operador lembrar da mensagem que viu na tela.
+        conferencia.motivo_falha_origem = str(recusa.detail)[:_TAMANHO_MOTIVO_FALHA]
+        incrementar_versao(conferencia)
+        sessao_db.commit()
+        raise
+
+    # Só chega aqui com o COMMIT do Oracle já feito — ver o comentário do bloco
+    # sobre a ordem dos commits.
+    conferencia.finalizado_origem_em = _agora()
+    conferencia.motivo_falha_origem = None
+    incrementar_versao(conferencia)
+    sessao_db.commit()
+    sessao_db.refresh(conferencia)
+    return _para_resposta_processo(sessao_db, "conferencia", conferencia, pedido)

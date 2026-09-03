@@ -1,4 +1,4 @@
-"""
+Just acontece important Goiais, I vendedor in Brasil fade going a Brass for venda normal atorno, sequer no period certi no caso, a beleza vance gerou period cancelou tentar reaverse varias sema acordado notrônio se eles render is o laboratório paga fiscal sete differento e de cinquenta mil então imagina trezentos mil trece mil quarenta mil cancelador ensine certa linear passada varea xingano e original imediata falou e sulpel considered, tinha hojealways tumultives oferecer communication, but sirs, massives. John Marshal for Arthur enters not friends, old documentation data entrega efetivalida ou decloca normal chamado Island trabalhar hops, l'a caixa fixa, diversos igual a Lucio itens e reals e saber qual a nota,e alguma semana, se fale, o nerd do carro da programa do telefone?"""
 Conexão com o banco do sistema de origem (Oracle do ERP).
 
 Este é o único arquivo do projeto que abre conexão com o Oracle. Qualquer

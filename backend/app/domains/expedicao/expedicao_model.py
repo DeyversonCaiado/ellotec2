@@ -165,6 +165,42 @@ class Conferencia(Base, IdMixin, SyncMixin):
     )
     data_fim: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True, default=None)
 
+    # --- O desfecho da baixa no ERP (GESTCOM) ---
+    #
+    # A conferência fechar aqui e o pedido fechar lá são duas coisas: o Oracle
+    # é outro banco, outra transação, e pode estar fora do ar no exato momento
+    # em que o operador termina de bipar. Sem estas duas colunas o pedido ficava
+    # "conferido" no ELLOTEC e `PED` no ERP, sem ninguém saber por quê.
+    #
+    # `finalizado_origem_em` é coluna de negócio própria, e não `sync_*`: o
+    # instante em que o ERP aceitou a baixa é um FATO, e campo de sincronização
+    # nunca entra na regra de negócio (ver ARCHITECTURE.md).
+    finalizado_origem_em: Mapped[datetime | None] = mapped_column(
+        DateTime(), nullable=True, default=None
+    )
+    # Por que a última tentativa foi recusada. Sobrescrito a cada tentativa e
+    # limpo quando dá certo — é o que a tela mostra para o operador entender se
+    # o caso é "tenta de novo" ou "chama o faturamento".
+    motivo_falha_origem: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    # Quem tentou e quando, na ÚLTIMA tentativa — deu certo ou não.
+    #
+    # Sem este par, `motivo_falha_origem` conta o que aconteceu mas não em nome
+    # de quem nem a que horas, e a pergunta que aparece depois é sempre essa:
+    # "quem tentou fechar este pedido e não conseguiu?". Numa recusa por conta
+    # sem vínculo no ERP, saber QUAL conta clicou é o que resolve o caso.
+    #
+    # Sobrescrito a cada tentativa, e NÃO limpo no sucesso: aí ele passa a
+    # responder "quem fechou o pedido", junto com `finalizado_origem_em`.
+    tentativa_origem_usuario_id: Mapped[str | None] = mapped_column(
+        ForeignKey("usuarios.id"), nullable=True, index=True, default=None
+    )
+    # Coluna de negócio própria, e não `sync_updated_at`: a linha é tocada por
+    # outras escritas, e a hora da tentativa é um fato que não pode se mexer
+    # sozinho (ver ARCHITECTURE.md).
+    tentativa_origem_em: Mapped[datetime | None] = mapped_column(
+        DateTime(), nullable=True, default=None
+    )
+
     itens: Mapped[list["ConferenciaItem"]] = relationship(
         back_populates="conferencia",
         cascade="all, delete-orphan",

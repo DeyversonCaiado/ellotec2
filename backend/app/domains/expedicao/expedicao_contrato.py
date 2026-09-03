@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import Field
@@ -35,6 +36,32 @@ class FinalizarItemSchema(ContratoBase):
 
     usuario_gerente: str | None = None
     senha: str | None = None
+
+
+class FinalizarNoSistemaOrigemSchema(ContratoBase):
+    """Os dados de embarque que o ERP pede para fechar o pedido.
+
+    São quatro números que o galpão só conhece DEPOIS de conferir e embalar —
+    por isso não saem de lugar nenhum do sistema, e o operador digita.
+
+    `volume` é `Decimal` e não `int` só porque é assim que quantidade entra em
+    contrato neste projeto; ele é sempre inteiro (contagem de volumes), e é isso
+    que o `ge=1` e `decimal_places=0` garantem. No ERP a coluna
+    `VOLUME_PEDIDO` é `VARCHAR2(10)` — a conversão para texto acontece em
+    `sistema_origem_service._volume_para_o_erp`, e o `le` acima é o que impede
+    um número que não caberia lá.
+    """
+
+    volume: Decimal = Field(ge=1, le=9_999_999_999, decimal_places=0)
+    # 10 caracteres é o tamanho da coluna ESPECIE_PEDIDO no ERP — VARCHAR2(10),
+    # conferido em `all_tab_columns`, não estimado (ex: CX, FD, SC, CAIXA).
+    # Digitado livre, e a maiúscula é garantida no service — o front também
+    # força, mas ele é conveniência, não barreira.
+    especie: str = Field(min_length=1, max_length=10)
+    # Peso em quilos. `gt=0` porque pedido embarcado sem peso não existe, e o
+    # zero passaria batido até a nota sair errada.
+    peso_liquido: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
+    peso_bruto: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
 
 
 class AtribuirSchema(ContratoBase):
@@ -156,6 +183,15 @@ class ProcessoRespostaSchema(ContratoBase):
     usuario_gestor_fim_nome: str | None = None
     data_inicio: DataHoraUtc | None
     data_fim: DataHoraUtc | None
+    # Desfecho da baixa no ERP. Só a conferência tem — na separação vem sempre
+    # nulo, porque não existe nada para fechar no sistema de origem ali.
+    finalizado_origem_em: DataHoraUtc | None = None
+    motivo_falha_origem: str | None = None
+    # Quem tentou e quando, na última tentativa — deu certo ou não. É o que
+    # responde "quem tentou fechar este pedido, e a que horas?" sem depender de
+    # ninguém lembrar. O nome, e não o id: quem lê é gente.
+    tentativa_origem_em: DataHoraUtc | None = None
+    tentativa_origem_usuario_nome: str | None = None
     itens: list[ItemProcessoRespostaSchema]
 
 
@@ -190,6 +226,14 @@ class SituacaoProcessoSchema(ContratoBase):
     # Derivado dos dois acima. Existe para a tela não repetir a mesma condição
     # em três lugares só para decidir se desenha o selo.
     delegado: bool = False
+    # Mesmo par de ProcessoRespostaSchema — a tela do pedido precisa saber se
+    # a conferência já foi baixada no ERP para decidir entre oferecer o botão
+    # de finalizar e mostrar o selo de finalizado.
+    finalizado_origem_em: DataHoraUtc | None = None
+    motivo_falha_origem: str | None = None
+    # Mesmo par de ProcessoRespostaSchema — ver lá.
+    tentativa_origem_em: DataHoraUtc | None = None
+    tentativa_origem_usuario_nome: str | None = None
 
 
 class PedidoExpedicaoListaSchema(ContratoBase):

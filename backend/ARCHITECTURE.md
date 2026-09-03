@@ -60,6 +60,7 @@ app/
 │   ├── pedidos/                       # CRUD de pedidos
 │   ├── estoque/                       # saldo por produto e por lote
 │   └── enderecamento/                 # endereços do galpão e o lote em cada um
+│   └── sistema_origem/                # o que o ELLOTEC manda o ERP fazer (sem tabela nossa)
 ├── shared/
 │   ├── sync_mixin.py                  # SyncMixin (5 campos sync_*) + IdMixin (UUID)
 │   ├── sync_helpers.py                # marcar_apagado(), incrementar_versao()
@@ -833,6 +834,147 @@ Todo o resto entra por bind (`%(nome)s`).
 `OuroWebIndisponivel` é traduzido para `503 Service Unavailable` no router. Não
 é defeito nosso: é o sistema de origem indisponível, e a tela precisa saber a
 diferença para dizer o que aconteceu em vez de mostrar "erro interno".
+
+## Domínio que ESCREVE no sistema de origem
+
+O domínio `sistema_origem/` é o irmão de `cotacoes/` para o outro lado: também
+não tem tabela nossa e também não usa a `Session` do SQLAlchemy, mas em vez de
+LER um banco externo, ele **manda o ERP (GESTCOM, Oracle) fazer alguma coisa**.
+
+> Não confundir com o pacote **`app/shared/sistema_origem/`**, que tem o mesmo
+> nome e é outra coisa: lá mora a INFRAESTRUTURA (conexão, config, rotinas de
+> sincronização); aqui mora a REGRA DE NEGÓCIO de "o que o ELLOTEC pode pedir ao
+> ERP". O domínio usa a infraestrutura; a infraestrutura nunca importa o
+> domínio.
+
+### O nome é do assunto, não da função
+
+Hoje existe uma operação só — finalizar o pedido depois da conferência. O
+domínio não se chama `finalizacao_origem` de propósito: outras operações do ERP
+virão para cá, e renomear um domínio depois custa rota, chave de permissão,
+tela e migração. Nomear pelo assunto não é abstração antecipada (o código
+continua tendo só o que é usado hoje) — é só não escolher um nome que já nasce
+com data de validade.
+
+### Arquivos
+
+| Arquivo | Papel |
+|---|---|
+| `sistema_origem_service.py` | o SQL, as constantes do ERP e a regra. Não recebe `Session` |
+| `sistema_origem_publico.py` | a borda: é por aqui que os outros domínios pedem |
+
+Não existe `_model.py` (não há tabela nossa), não existe migração, e **não
+existe `_router.py`**: nenhuma das operações é uma tela por si só. Quem expõe o
+endpoint é o domínio que tem o caso de uso — hoje `expedicao`, que já é dono da
+conferência, da permissão e da tela onde o operador está.
+
+### A borda daqui commita, e isso não contradiz a regra
+
+A regra do `<dominio>_publico.py` diz que **nenhuma função da borda dá
+`commit()`**. Ela continua valendo, e vale sobre a **nossa `Session`**: quem
+abriu a transação do MySQL é quem decide o desfecho dela.
+
+Aqui não existe `Session`. A escrita é numa conexão Oracle própria, que precisa
+commitar sozinha — não há como um `commit` do MySQL desfazer um `UPDATE` já
+gravado em outro banco. Duas consequências práticas, e as duas são obrigatórias:
+
+1. **O ERP commita primeiro; o nosso banco depois.** Se a ordem se inverter e o
+   ERP recusar, fica gravado aqui que o pedido foi fechado lá — mentira que só
+   aparece no faturamento.
+2. **A falha do ERP tem que ficar registrada no nosso banco.** É o que responde,
+   dias depois, "por que este pedido está conferido aqui e aberto lá?". Foi para
+   isso que nasceram as quatro colunas de `expedicao_conferencias` —
+   `finalizado_origem_em`, `motivo_falha_origem`,
+   `tentativa_origem_usuario_id` e `tentativa_origem_em`. Todas de negócio,
+   nunca campos `sync_*`.
+
+   As duas de tentativa foram acrescentadas depois, e o motivo vale registrar:
+   o motivo gravado conta o QUE aconteceu, mas não em nome de quem. A primeira
+   recusa real em produção foi "o usuário não tem vínculo com o sistema de
+   origem" — e a única pergunta que importava era *qual conta clicou*, porque
+   contas administrativas nossas (`admin`) não têm código de funcionário no ERP
+   e caem exatamente nessa recusa. Sem as colunas, a resposta dependia de
+   alguém lembrar. Elas são sobrescritas a cada tentativa e **não** são limpas
+   no sucesso: aí passam a responder "quem fechou o pedido, e quando".
+
+### A pré-condição é lida do próprio ERP, com trava
+
+Antes de qualquer escrita, o service lê o status atual do pedido no Oracle com
+`SELECT ... FOR UPDATE` e exige que ele ainda esteja em `PED`. O `FOR UPDATE`
+não é detalhe de estilo: sem ele, entre ler o status e gravar o `FEC` cabe o
+faturamento do pedido pelo outro lado, e a nossa baixa passaria por cima dele
+sem ninguém perceber.
+
+Pela mesma razão a operação **não é idempotente e não deve ser**: a segunda
+chamada encontra o pedido fora do `PED` e é recusada com 409. É essa recusa que
+faz o papel da trava.
+
+### Como os erros são traduzidos
+
+| Situação | Resposta | Por quê |
+|---|---|---|
+| Pedido não existe no ERP | 404 | o vínculo aponta para um registro que não está lá |
+| Pedido fora do `PED` | 409 | alguém mexeu no pedido do lado de lá; não é erro do operador |
+| Empresa/pedido/usuário sem vínculo | 409 | sem o código do ERP não dá para identificar o registro — e chutar daria baixa no pedido errado |
+| Oracle fora do ar, sem client, credencial errada | 503 | canal indisponível, não defeito nosso. A conferência feita no galpão continua valendo |
+| Erro do driver no meio da transação (ORA-…) | 502 | o ERP recusou; nada foi commitado |
+
+Nunca 500: das cinco linhas acima, nenhuma é "a aplicação quebrou", e chamar
+todas de erro interno tiraria do operador a única informação que decide o que
+ele faz em seguida — tentar de novo, ou chamar o faturamento.
+
+### Os tipos e tamanhos vêm de `all_tab_columns`, nunca de estimativa
+
+O Oracle não recusa estouro de coluna com uma mensagem útil — recusa com
+`ORA-12899` já dentro da transação. Por isso os tamanhos são checados antes de
+abrir a conexão, e as constantes ficam nomeadas no topo do service.
+
+Mas o ponto mais importante é de onde eles saem. **Consulte
+`all_tab_columns`** antes de assumir tipo ou tamanho de coluna do ERP:
+
+```sql
+select data_type, data_length from all_tab_columns
+ where table_name = 'FAT_CAPAPEDIDO' and column_name = 'VOLUME_PEDIDO';
+```
+
+A especificação da tela do ERP que originou esta função anotava
+`:vVOLUME(FLOAT)` e `:vMARCA_PEDIDO(VARCHAR[6])`, e as duas anotações
+enganavam: `VOLUME_PEDIDO` é `VARCHAR2(10)` — **texto** — e `MARCA_PEDIDO` é
+`VARCHAR2(20)`, não 6 (aquele 6 era o tamanho do literal `'OUTROS'`). Os
+valores anotados descrevem o que a tela mandava, não a coluna.
+
+O caso do volume não daria erro nenhum, e é o pior tipo de defeito por isso: um
+bind numérico numa coluna de texto é convertido pelo Oracle usando o
+`NLS_NUMERIC_CHARACTERS` da sessão, que em português usa vírgula. O pedido
+ficaria com `4,0` gravado onde o ERP grava `4`. Os dois "parecem" quatro.
+Por isso a string é montada em `_volume_para_o_erp`, no nosso lado.
+
+Os limites conferidos hoje:
+
+| coluna | tipo real | o que a constante do service diz |
+|---|---|---|
+| `FAT_POLICE.FUNCIONARIO` | `VARCHAR2(5)` | `TAMANHO_FUNCIONARIO = 5` |
+| `FAT_CAPAPEDIDO.CONFERIDOR` | `VARCHAR2(20)` | recebe o mesmo código; vale o menor dos dois |
+| `FAT_CAPAPEDIDO.ESPECIE_PEDIDO` | `VARCHAR2(10)` | `TAMANHO_ESPECIE = 10` |
+| `FAT_CAPAPEDIDO.VOLUME_PEDIDO` | `VARCHAR2(10)` | `TAMANHO_VOLUME = 10` |
+| `FAT_CAPAPEDIDO.PESO_LIQUIDO` / `PESO_BRUTO` | `NUMBER` | numéricos de verdade |
+| `FAT_CAPAPEDIDO.MARCA_PEDIDO` | `VARCHAR2(20)` | `MARCA_PEDIDO = "DIVERSOS"` |
+
+Quando o mesmo valor vai para duas colunas de tamanhos diferentes, **vale o
+menor** — é o que o código faz com o código do funcionário.
+
+### Como isso é testado sem tocar o ERP
+
+O Oracle do GESTCOM é **base de produção**: um teste que conecte de verdade muda
+o status de pedidos reais. `tests/test_sistema_origem_finalizar_pedido.py`
+substitui `conectar` por uma conexão de mentira que só anota o que recebeu, e
+afirma sobre o que foi anotado — quais comandos saíram, em que ordem, com que
+parâmetros, e se houve `commit`. O teste do fluxo completo
+(`TestFinalizarNoSistemaOrigem` em `test_expedicao_e2e.py`) troca a própria
+borda por uma função de mentira e verifica o que fica gravado do nosso lado.
+
+Nenhum teste automatizado deste projeto escreve no ERP, e nenhum deve passar a
+escrever.
 
 ## Onde cada coisa fica (FAQ para agente de IA)
 

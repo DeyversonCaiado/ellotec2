@@ -292,24 +292,33 @@ Copie [`.env.example`](.env.example) para
 > `DPI-1047 ... libmql1.so: cannot open shared object file` — mensagem que
 > parece dizer que o client não está instalado, quando ele está.
 >
-> A unit `deploy/ellotec2-sincronizacao.service` já traz
-> `Environment="LD_LIBRARY_PATH=/opt/oracle/instantclient_12_2"` por causa
-> disso. Num servidor que já rodava antes desta linha existir, o ajuste é um
-> drop-in:
+> **Os DOIS serviços precisam da variável**, e é o erro mais fácil de cometer
+> aqui: `deploy/ellotec2-sincronizacao.service` a tem desde sempre, e
+> `deploy/ellotec2-api.service` passou a ter quando a API ganhou a finalização
+> de pedido no ERP (domínio `sistema_origem`). Antes disso só a sincronização
+> falava com o Oracle, e a unit da API não precisava — a falta dela lá custou
+> um 503 em produção com exatamente esta DPI-1047. **Ao mexer numa unit, olhe
+> a outra.**
+>
+> Num servidor que já rodava antes de a linha existir na unit, o ajuste é um
+> drop-in — e vale para os dois serviços:
 >
 > ```bash
-> sudo mkdir -p /etc/systemd/system/ellotec2-sincronizacao.service.d
-> sudo tee /etc/systemd/system/ellotec2-sincronizacao.service.d/oracle.conf <<'EOF'
+> for servico in ellotec2-api ellotec2-sincronizacao; do
+>   sudo mkdir -p /etc/systemd/system/$servico.service.d
+>   sudo tee /etc/systemd/system/$servico.service.d/oracle.conf <<'EOF'
 > [Service]
 > Environment="LD_LIBRARY_PATH=/opt/oracle/instantclient_12_2"
 > EOF
-> sudo systemctl daemon-reload && sudo systemctl restart ellotec2-sincronizacao
+> done
+> sudo systemctl daemon-reload
+> sudo systemctl restart ellotec2-api ellotec2-sincronizacao
 > ```
 >
 > A alternativa é registrar a pasta no carregador do sistema
 > (`/etc/ld.so.conf.d/oracle-instantclient.conf` + `sudo ldconfig`), que vale
-> para qualquer processo. Só o serviço de sincronização fala com o Oracle do
-> GESTCOM — a API não importa o pacote `gestcom` —, então a variável basta.
+> para qualquer processo de uma vez. Com dois serviços a variável ainda dá
+> conta; se aparecer um terceiro, o `ldconfig` passa a ser o caminho melhor.
 
 O `.env` é lido a partir do diretório onde o processo roda, não da pasta do
 código — é por isso que os dois serviços definem

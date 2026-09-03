@@ -27,6 +27,21 @@ WorkingDirectory=/home/ello/projetos/ellotec2/backend
 # não só em localhost — é assim que o front e o coletor a alcançam.
 ExecStart=/home/ello/projetos/ellotec2/backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
+# Onde o Oracle Instant Client mora, para o carregador do Linux achar as
+# bibliotecas de que o `libclntsh.so` depende.
+#
+# Sem esta linha, toda finalização de pedido no ERP responde 503 com
+# "DPI-1047: Cannot locate a 64-bit Oracle Client library: libmql1.so: cannot
+# open shared object file" — mensagem que parece dizer que o client não está
+# instalado, quando ele está: o que falta é o caminho de busca.
+#
+# A API passou a precisar disto quando ganhou a finalização de pedido no
+# sistema de origem (domínio `sistema_origem`). Antes disso só o
+# `ellotec2-sincronizacao` falava com o Oracle, e só ele tinha a variável.
+# Se um terceiro processo precisar, vale trocar as duas por um registro no
+# carregador do sistema (/etc/ld.so.conf.d/ + ldconfig), que vale para todos.
+Environment="LD_LIBRARY_PATH=/opt/oracle/instantclient_12_2"
+
 Restart=always
 RestartSec=5
 

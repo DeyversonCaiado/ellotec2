@@ -242,6 +242,19 @@ export const ESTRUTURA_APP: SecaoApp[] = [
             ],
           },
           {
+            // Os parâmetros do processo de expedição. Módulo separado, e não
+            // uma aba dentro da tela de expedição, porque ligar e desligar
+            // regra do galpão é decisão de quem responde pelo processo — o
+            // operador que separa e confere não precisa nem ver esta tela.
+            rotulo: 'Configurações da expedição',
+            icone: 'settings',
+            rota: '/expedicao-configuracoes',
+            acoes: [
+              { label: 'Acessar', chave: 'expedicao_configuracoes.acessar' },
+              { label: 'Editar parâmetros', chave: 'expedicao_configuracoes.gravar.editar' },
+            ],
+          },
+          {
             // Domínio que ESCREVE no ERP (GESTCOM). A tela é uma casca por
             // enquanto: a única operação existente — finalizar o pedido depois
             // da conferência — é usada de dentro da expedição, no fluxo do

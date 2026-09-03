@@ -75,6 +75,21 @@ jobs:
           "$DESTINO_BACKEND/.venv/bin/pip" install --upgrade pip
           "$DESTINO_BACKEND/.venv/bin/pip" install -r "$DESTINO_BACKEND/requirements.txt"
 
+      - name: Conferir se o codigo compila
+        # Roda ANTES da migração e do restart, de propósito: se houver erro de
+        # sintaxe, o deploy morre aqui com o serviço ANTIGO ainda no ar e o
+        # banco intocado. Sem este passo, o primeiro a descobrir o problema é o
+        # `systemctl restart`, que mata a API e sobe um processo que não
+        # importa — foi o que aconteceu no deploy de 03/09/2026, quando uma
+        # linha de docstring de `gestcom/conexao.py` foi sobrescrita por
+        # ditado de voz e a API ficou fora do ar até o próximo deploy.
+        #
+        # `compileall` só compila, não importa nada: não abre conexão com
+        # banco, não lê .env, não sobe servidor. Leva segundos e não tem como
+        # ter efeito colateral.
+        working-directory: /home/ello/projetos/ellotec2/backend
+        run: .venv/bin/python -m compileall -q app
+
       - name: Aplicar migracoes do banco
         working-directory: /home/ello/projetos/ellotec2/backend
         run: .venv/bin/alembic upgrade head

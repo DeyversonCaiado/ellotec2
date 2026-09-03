@@ -55,6 +55,7 @@ from app.domains.expedicao.expedicao_model import (
     Separacao,
     SeparacaoItem,
 )
+from app.domains.expedicao_configuracoes import expedicao_configuracao_publico
 from app.domains.pedidos import pedido_publico
 from app.domains.produtos import produto_publico
 from app.domains.sistema_origem import sistema_origem_publico
@@ -920,7 +921,14 @@ def listar_pedidos(
         sessao_db,
         [item.produto_id for pedido in pedidos for item in pedido.itens],
     )
-    enderecamento = _enderecamento_dos_pedidos(sessao_db, pedidos, produtos_da_pagina)
+    # Uma leitura só para a página inteira: os parâmetros são do galpão, não do
+    # pedido, e consultá-los por linha daria N consultas iguais.
+    enderecamento = _enderecamento_dos_pedidos(
+        sessao_db,
+        pedidos,
+        produtos_da_pagina,
+        expedicao_configuracao_publico.obter_parametros(sessao_db),
+    )
     bloqueios = {
         pedido.id: _bloqueio_do_pedido(
             pedido,
@@ -1043,7 +1051,11 @@ _SEM_ENDERECAMENTO = _Enderecamento(
 
 
 def _bloqueio_do_item(
-    item, enderecos: list[EnderecoItemSchema], enderecada: Decimal, multipla_venda: int
+    item,
+    enderecos: list[EnderecoItemSchema],
+    enderecada: Decimal,
+    multipla_venda: int,
+    parametros: expedicao_configuracao_publico.ParametrosExpedicao,
 ) -> str | None:
     """As duas regras de consistência, na ordem em que o operador as entende.
 
@@ -1058,14 +1070,26 @@ def _bloqueio_do_item(
        aquele endereço. Um saldo assim é erro de cadastro ou sobra de uma baixa
        manual, e é melhor descobrir agora do que com o operador na frente da
        prateleira.
+
+    **Cada uma tem o seu parâmetro** em `expedicao_configuracoes`, e é aqui — no
+    item, antes de o texto existir — que a configuração decide. Desligar uma
+    regra é a regra não ser calculada, não um bloqueio calculado que alguém
+    ignora depois: `bloqueio` preenchido significa, em todo o resto do código e
+    do front, "este pedido não pode ser iniciado".
+
+    Elas são parâmetros separados porque são problemas diferentes do galpão —
+    falta de mercadoria endereçada versus saldo quebrado numa prateleira — e um
+    interruptor só obrigaria a desligar as duas para resolver metade.
     """
-    if enderecada < Decimal(item.quantidade):
+    if not parametros.permite_conferir_com_divergencia and enderecada < Decimal(
+        item.quantidade
+    ):
         return (
             f"Endereçamento insuficiente: os endereços somam {_texto_quantidade(enderecada)} "
             f"e o pedido precisa de {item.quantidade}."
         )
 
-    if multipla_venda > 1:
+    if not parametros.permite_conferir_fora_do_multiplo_de_venda and multipla_venda > 1:
         quebrados = [
             endereco
             for endereco in enderecos
@@ -1093,6 +1117,7 @@ def _enderecamento_dos_pedidos(
     sessao_db: Session,
     pedidos: list[pedido_publico.PedidoResumo],
     produtos: dict[str, produto_publico.ProdutoExpedicao],
+    parametros: expedicao_configuracao_publico.ParametrosExpedicao,
 ) -> dict[str, _Enderecamento]:
     """pedido_item_id -> endereços daquele lote, com quantidade e bloqueio.
 
@@ -1143,7 +1168,11 @@ def _enderecamento_dos_pedidos(
                 enderecos=enderecos,
                 quantidade_enderecada=enderecada,
                 bloqueio=_bloqueio_do_item(
-                    item, enderecos, enderecada, produto.quantidade_multipla_venda
+                    item,
+                    enderecos,
+                    enderecada,
+                    produto.quantidade_multipla_venda,
+                    parametros,
                 ),
             )
     return resultado
@@ -1156,6 +1185,11 @@ def _bloqueio_do_pedido(
 ) -> str | None:
     """A primeira pendência de endereçamento do pedido, ou None se está tudo em
     ordem. Basta um item para travar o pedido — ver o comentário do bloco.
+
+    **Os parâmetros do galpão não chegam aqui**, e isso é de propósito: quem os
+    aplica é `_bloqueio_do_item`, uma regra de cada vez. Quando o coordenador
+    desliga uma delas, ela deixa de ser calculada — não vira um bloqueio
+    calculado que esta função ignora depois. Ver `expedicao_configuracoes`.
 
     **Depois que a separação fecha, a regra deixa de valer.** A mercadoria já
     saiu da prateleira (foi esta função que autorizou, e o fechamento baixou o
@@ -1270,7 +1304,12 @@ def obter_pedido(sessao_db: Session, pedido_id: str) -> PedidoExpedicaoDetalheSc
     itens_separacao = _mapa_itens_processados(sessao_db, "separacao", pedido.id)
     itens_conferencia = _mapa_itens_processados(sessao_db, "conferencia", pedido.id)
     produtos = _produtos_do_pedido(sessao_db, pedido)
-    enderecamento = _enderecamento_dos_pedidos(sessao_db, [pedido], produtos)
+    enderecamento = _enderecamento_dos_pedidos(
+        sessao_db,
+        [pedido],
+        produtos,
+        expedicao_configuracao_publico.obter_parametros(sessao_db),
+    )
     bloqueio_enderecamento = _bloqueio_do_pedido(
         pedido, enderecamento, _separacao_finalizada(sessao_db, pedido.id)
     )
@@ -1351,7 +1390,12 @@ def _para_resposta_processo(
     configuracao = _config(tipo)
     itens_pedido = {item.id: item for item in pedido.itens}
     produtos = _produtos_do_pedido(sessao_db, pedido)
-    enderecamento = _enderecamento_dos_pedidos(sessao_db, [pedido], produtos)
+    enderecamento = _enderecamento_dos_pedidos(
+        sessao_db,
+        [pedido],
+        produtos,
+        expedicao_configuracao_publico.obter_parametros(sessao_db),
+    )
     return ProcessoRespostaSchema(
         id=processo.id,
         tipo=tipo,
@@ -1487,7 +1531,12 @@ def iniciar_processo(
     produtos = _produtos_do_pedido(sessao_db, pedido)
     bloqueio = _bloqueio_do_pedido(
         pedido,
-        _enderecamento_dos_pedidos(sessao_db, [pedido], produtos),
+        _enderecamento_dos_pedidos(
+            sessao_db,
+            [pedido],
+            produtos,
+            expedicao_configuracao_publico.obter_parametros(sessao_db),
+        ),
         _separacao_finalizada(sessao_db, pedido_id),
     )
     if bloqueio is not None:
@@ -1869,7 +1918,12 @@ def iniciar_delegado(
         produtos = _produtos_do_pedido(sessao_db, pedido)
         bloqueio = _bloqueio_do_pedido(
             pedido,
-            _enderecamento_dos_pedidos(sessao_db, [pedido], produtos),
+            _enderecamento_dos_pedidos(
+                sessao_db,
+                [pedido],
+                produtos,
+                expedicao_configuracao_publico.obter_parametros(sessao_db),
+            ),
             _separacao_finalizada(sessao_db, pedido_id),
         )
         if bloqueio is not None:

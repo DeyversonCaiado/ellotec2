@@ -55,6 +55,13 @@ export const routes: Routes = [
         loadChildren: () => import('./domains/expedicao/expedicao.routes').then((m) => m.EXPEDICAO_ROUTES),
       },
       {
+        path: 'expedicao-configuracoes',
+        loadChildren: () =>
+          import('./domains/expedicao-configuracoes/expedicao-configuracao.routes').then(
+            (m) => m.EXPEDICAO_CONFIGURACAO_ROUTES,
+          ),
+      },
+      {
         path: 'empresas',
         loadChildren: () => import('./domains/empresas/empresa.routes').then((m) => m.EMPRESA_ROUTES),
       },

@@ -1,0 +1,217 @@
+<div class="p-4 sm:p-6 max-w-[900px] mx-auto">
+
+  <app-page-header
+    titulo="Configurações da expedição"
+    subtitulo="Parâmetros que valem para o galpão inteiro, até alguém mudar aqui"
+  />
+
+  @if (erro()) {
+    <div class="flex items-start gap-2 text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/40 rounded-lg p-3 mb-4">
+      <app-icon name="alert" class="size-4 mt-0.5 shrink-0" />
+      <span>{{ erro() }}</span>
+    </div>
+  }
+
+  @if (salvo()) {
+    <div class="flex items-start gap-2 text-sm text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-900/40 rounded-lg p-3 mb-4">
+      <app-icon name="check" class="size-4 mt-0.5 shrink-0" />
+      <span>Parâmetros salvos. A mudança já vale para os próximos pedidos abertos na expedição.</span>
+    </div>
+  }
+
+  <form [formGroup]="form" (ngSubmit)="salvar()"
+    class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl divide-y divide-gray-100 dark:divide-gray-800">
+
+    <div class="px-5 sm:px-6 py-4">
+      <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-100">Trava de endereçamento</h2>
+      <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+        As duas checagens feitas antes de deixar um pedido entrar na separação ou
+        na conferência. Cada uma liga e desliga por conta própria.
+      </p>
+    </div>
+
+    <div class="px-5 sm:px-6 py-5">
+      <div class="flex items-start gap-3">
+        <input
+          id="permiteConferirComDivergencia"
+          type="checkbox"
+          formControlName="permiteConferirComDivergencia"
+          class="mt-0.5 size-4 shrink-0 rounded border-gray-300 dark:border-gray-600 dark:bg-gray-800 text-brand-600 focus:ring-brand-500 disabled:opacity-60"
+        />
+
+        <div class="min-w-0">
+          <div class="flex items-center gap-1.5">
+            <label for="permiteConferirComDivergencia"
+              class="text-sm font-medium text-gray-800 dark:text-gray-100 cursor-pointer">
+              Permite conferir pedido com divergência de estoque e lote
+            </label>
+
+            <!-- O "?" abre a explicação completa. Popover e não tooltip de
+                 propósito: o texto tem exemplo e mais de uma linha, e tooltip
+                 some quando o mouse sai — quem está decidindo precisa poder ler
+                 com calma e rolar a página. -->
+            <button
+              type="button"
+              (click)="ajudaDivergencia.toggle($event)"
+              aria-label="O que este parâmetro faz?"
+              class="shrink-0 text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 rounded-full focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <app-icon name="help" class="size-4" />
+            </button>
+          </div>
+
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            Desmarcado (padrão): pedido cujo lote não tem endereçado o suficiente
+            não pode ser separado nem conferido.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="px-5 sm:px-6 py-5">
+      <div class="flex items-start gap-3">
+        <input
+          id="permiteConferirForaDoMultiploDeVenda"
+          type="checkbox"
+          formControlName="permiteConferirForaDoMultiploDeVenda"
+          class="mt-0.5 size-4 shrink-0 rounded border-gray-300 dark:border-gray-600 dark:bg-gray-800 text-brand-600 focus:ring-brand-500 disabled:opacity-60"
+        />
+
+        <div class="min-w-0">
+          <div class="flex items-center gap-1.5">
+            <label for="permiteConferirForaDoMultiploDeVenda"
+              class="text-sm font-medium text-gray-800 dark:text-gray-100 cursor-pointer">
+              Permite conferir pedido com endereço fora do múltiplo de venda
+            </label>
+
+            <button
+              type="button"
+              (click)="ajudaMultiplo.toggle($event)"
+              aria-label="O que este parâmetro faz?"
+              class="shrink-0 text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 rounded-full focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <app-icon name="help" class="size-4" />
+            </button>
+          </div>
+
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            Desmarcado (padrão): endereço cujo saldo não fecha na embalagem de
+            venda do produto barra o pedido.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="px-5 sm:px-6 py-4 flex items-center justify-end gap-3">
+      <button *appPermissao="'expedicao_configuracoes.gravar.editar'"
+        type="submit" [disabled]="salvando() || carregando()"
+        class="inline-flex items-center gap-2 text-sm font-semibold bg-brand-600 text-white rounded-lg px-5 py-2.5 hover:bg-brand-700 disabled:opacity-60">
+        @if (salvando()) {
+          <svg class="animate-spin size-4" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
+          </svg>
+        } @else {
+          <app-icon name="check" class="size-4" />
+        }
+        Salvar configurações
+      </button>
+    </div>
+  </form>
+</div>
+
+<p-popover #ajudaDivergencia [style]="{ 'max-width': '30rem' }">
+  <div class="max-w-[28rem] text-sm text-gray-600 dark:text-gray-300 space-y-3">
+    <p class="font-semibold text-gray-900 dark:text-gray-50">
+      Permite conferir pedido com divergência de estoque e lote
+    </p>
+
+    <p>
+      Antes de deixar um pedido entrar na separação ou na conferência, o sistema
+      soma, item por item, quanto do <strong>lote daquela linha do pedido</strong>
+      está endereçado no galpão. Se a soma for menor que a quantidade vendida, o
+      pedido é reprovado — não dá para separar o que não está na prateleira.
+    </p>
+
+    <div class="rounded-lg bg-gray-50 dark:bg-gray-800/60 p-3 space-y-1">
+      <p class="font-semibold text-gray-800 dark:text-gray-100">Exemplo</p>
+      <p>
+        O pedido 4512 pede <strong>60 unidades</strong> do produto 8821, lote
+        <strong>L2409</strong>. No galpão, esse lote está em dois endereços:
+        07-14-08 com 24 e 07-15-02 com 18 — <strong>42 no total</strong>.
+      </p>
+      <p>
+        <strong>Desmarcado:</strong> o pedido aparece em vermelho na fila, com a
+        frase "Endereçamento insuficiente: os endereços somam 42 e o pedido
+        precisa de 60", e o botão de iniciar não aparece. Alguém precisa
+        endereçar as 18 que faltam (ou corrigir o lote) antes que o operador
+        pegue o coletor.
+      </p>
+      <p>
+        <strong>Marcado:</strong> o pedido é liberado normalmente. O operador
+        separa o que encontrar e a falta aparece na conferência, item a item, em
+        vez de barrar o pedido antes de começar.
+      </p>
+    </div>
+
+    <p class="text-xs text-gray-500 dark:text-gray-400">
+      Marque quando o endereçamento do galpão ainda não estiver em dia e a trava
+      estiver segurando pedido bom. Deixe desmarcado quando estiver — aí ela pega
+      o erro antes de o operador andar até a prateleira à toa.
+    </p>
+
+    <p class="text-xs text-gray-500 dark:text-gray-400">
+      Vale só para esta regra: o endereço fora do múltiplo de venda continua
+      barrando, e tem o parâmetro dele logo abaixo.
+    </p>
+  </div>
+</p-popover>
+
+<p-popover #ajudaMultiplo [style]="{ 'max-width': '30rem' }">
+  <div class="max-w-[28rem] text-sm text-gray-600 dark:text-gray-300 space-y-3">
+    <p class="font-semibold text-gray-900 dark:text-gray-50">
+      Permite conferir pedido com endereço fora do múltiplo de venda
+    </p>
+
+    <p>
+      Produto vendido em caixa fechada tem uma <strong>embalagem de venda</strong>
+      no cadastro (a "quantidade múltipla de venda"). Na bipagem, cada leitura da
+      caixa vale a caixa inteira. Se um endereço tiver um saldo que não fecha
+      nesse múltiplo, o operador nunca consegue zerar aquele endereço bipando —
+      sempre sobra ponta. Um saldo assim costuma ser erro de cadastro ou sobra de
+      uma baixa manual.
+    </p>
+
+    <div class="rounded-lg bg-gray-50 dark:bg-gray-800/60 p-3 space-y-1">
+      <p class="font-semibold text-gray-800 dark:text-gray-100">Exemplo</p>
+      <p>
+        O produto 8821 é vendido em <strong>caixa de 12</strong>. O pedido pede 12
+        e o endereço 07-16-01 tem <strong>19 unidades</strong> — saldo sobra, mas
+        19 não é múltiplo de 12.
+      </p>
+      <p>
+        <strong>Desmarcado:</strong> o pedido é barrado com "Endereço 07-16-01 tem
+        19, que não fecha em múltiplo de 12 (embalagem de venda do produto)".
+        Alguém acerta o saldo da prateleira antes.
+      </p>
+      <p>
+        <strong>Marcado:</strong> o pedido é liberado. O operador bipa a caixa
+        normalmente e as 7 unidades soltas seguem no endereço, para serem
+        acertadas depois.
+      </p>
+    </div>
+
+    <p class="text-xs text-gray-500 dark:text-gray-400">
+      É um parâmetro separado do de cima de propósito: um galpão pode conviver
+      com ponta quebrada na prateleira e não com mercadoria faltando endereçada,
+      ou o contrário. Um interruptor só obrigaria a desligar as duas checagens
+      para resolver metade do problema.
+    </p>
+
+    <p class="text-xs text-gray-500 dark:text-gray-400">
+      Para destravar um pedido específico sem mexer aqui, existe a permissão
+      "Liberar pedido com endereçamento inconsistente", usada na execução
+      delegada.
+    </p>
+  </div>
+</p-popover>

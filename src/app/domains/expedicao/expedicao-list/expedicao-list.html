@@ -107,8 +107,11 @@
         }
       </div>
 
-      <!-- Aberto ou fechado fica salvo em localStorage: é preferência de uso,
-           não estado de filtro (ver avancadosAbertos em expedicao-list.ts). -->
+      <!-- Tudo daqui para dentro é salvo em localStorage por usuário: o
+           accordion aberto ou fechado e os quatro filtros. É o modo de trabalho
+           da pessoa, não a pergunta do momento — as abas de situação, o período
+           e a busca, que são a pergunta, ficam de fora (ver o bloco de
+           preferências no topo de expedicao-list.ts). -->
       <p-accordion
         [value]="avancadosAbertos() ? 'avancados' : null"
         (valueChange)="avancadosAbertos.set($event === 'avancados')"
@@ -125,11 +128,10 @@
           <p-accordion-content>
             <div class="flex flex-col sm:flex-row sm:items-center gap-3">
               <!-- Status do ERP: multiselect porque a pergunta real é quase
-                   sempre um conjunto ("PED e separado"), não um valor só. A
-                   escolha fica salva em localStorage — é o modo de trabalho da
-                   pessoa, não uma pergunta do momento (ver STORAGE_STATUS_PEDIDO).
-                   Diferente dos dois selects ao lado, este filtra no SERVIDOR:
-                   por isso as opções vêm do catálogo inteiro, não da página. -->
+                   sempre um conjunto ("PED e separado"), não um valor só.
+                   Diferente dos dois selects ao lado, as opções vêm do catálogo
+                   inteiro e não da página — é o universo de status possíveis,
+                   não os que por acaso aparecem nestas 50 linhas. -->
               <p-multiselect
                 styleClass="w-full sm:w-64"
                 [options]="statusDisponiveis()"

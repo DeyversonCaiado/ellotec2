@@ -99,6 +99,12 @@ PERMISSOES_VALIDAS: list[str] = [
     # conferir é trabalho de galpão, mudar o status do pedido no sistema de
     # origem é ato administrativo, e quem faz um não faz o outro por tabela.
     "expedicao.finalizar_origem",
+    # --- Configurações da expedição ---
+    # Domínio próprio, e não mais uma chave dentro de `expedicao`: quem liga e
+    # desliga parâmetro do galpão é quem responde pelo processo, não quem
+    # separa e confere. Ver domains/expedicao_configuracoes/README.md.
+    "expedicao_configuracoes.acessar",
+    "expedicao_configuracoes.gravar.editar",
     # --- Sistema de origem (ERP) ---
     # Domínio que ESCREVE no GESTCOM. Hoje a única função dele é consumida de
     # dentro da expedição, e a tela própria existe só para o domínio ter lugar

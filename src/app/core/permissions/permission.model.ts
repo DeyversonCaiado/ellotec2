@@ -79,6 +79,12 @@ export type PermissaoKey =
   // conferir é trabalho de galpão, mudar o status do pedido no sistema de
   // origem é ato administrativo.
   | 'expedicao.finalizar_origem'
+  // --- Configurações da expedição ---
+  // Domínio próprio, e não mais uma chave dentro de `expedicao`: quem liga e
+  // desliga parâmetro do galpão é quem responde pelo processo, não quem separa
+  // e confere.
+  | 'expedicao_configuracoes.acessar'
+  | 'expedicao_configuracoes.gravar.editar'
   // --- Sistema de origem (ERP) ---
   // Domínio que ESCREVE no GESTCOM. A única função de hoje é consumida de
   // dentro da expedição; a tela própria existe para o domínio ter lugar no

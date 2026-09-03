@@ -34,9 +34,14 @@ ExecStart=/home/ello/projetos/ellotec2/backend/.venv/bin/python -m app.shared.si
 # está instalado, quando ele está.
 #
 # A alternativa é registrar a pasta no carregador do sistema
-# (/etc/ld.so.conf.d/ + ldconfig), que vale para qualquer processo. Aqui a
-# variável basta: só este serviço fala com o Oracle do GESTCOM — a API não
-# importa o pacote `gestcom`.
+# (/etc/ld.so.conf.d/ + ldconfig), que vale para qualquer processo.
+#
+# ATENÇÃO: este serviço não é mais o único que fala com o Oracle. Desde que a
+# API ganhou a finalização de pedido no ERP (domínio `sistema_origem`), o
+# `ellotec2-api.service` também precisa da mesma variável — e a falta dela lá
+# custou um 503 em produção com esta mesma DPI-1047. Ao mexer numa, olhe a
+# outra. Se aparecer um terceiro processo, aí vale trocar as duas pelo
+# ldconfig.
 Environment="LD_LIBRARY_PATH=/opt/oracle/instantclient_12_2"
 
 # O loop chama os.._exit(1) de propósito quando um registro de origem está

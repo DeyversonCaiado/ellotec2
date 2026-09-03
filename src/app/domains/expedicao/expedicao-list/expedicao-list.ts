@@ -1,4 +1,12 @@
-import { Component, OnInit, computed, effect, inject, signal } from '@angular/core';
+import {
+  Component,
+  OnInit,
+  WritableSignal,
+  computed,
+  effect,
+  inject,
+  signal,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -41,14 +49,29 @@ import { PageHeaderComponent } from '../../../shared/ui/page-header.component';
 // não detalhe desta tela. Reexportado para quem já importava daqui.
 export type { FiltroSituacao } from '../expedicao.model';
 
-/** Mesmo prefixo das outras preferências do app (ver tema.service.ts). */
-const STORAGE_AVANCADOS = 'ellotec_erp_expedicao_filtros_avancados';
-
-/** O status do ERP escolhido persiste entre sessões: quem trabalha no galpão
- *  olha sempre o mesmo recorte (normalmente só PED) e não quer remarcar isso
- *  toda vez que abre a tela. É o único filtro persistido — os outros são
- *  perguntas do momento, este é o modo de trabalho da pessoa. */
-const STORAGE_STATUS_PEDIDO = 'ellotec_erp_expedicao_status_pedido';
+/**
+ * As preferências desta tela, persistidas em localStorage — mesmo prefixo das
+ * outras preferências do app (ver tema.service.ts).
+ *
+ * **Os filtros avançados inteiros são preferência, não pergunta do momento.**
+ * Quem trabalha no galpão olha sempre o mesmo recorte — o status do ERP que
+ * interessa (normalmente só PED), a filial em que está, e muitas vezes só os
+ * pedidos dele — e remarcar isso toda manhã é trabalho repetido. Os filtros que
+ * ficam FORA daqui são os de cima: as abas de situação, o período e a busca
+ * digitada, que são de fato a pergunta daquele minuto.
+ *
+ * **Cada chave termina no id do usuário logado.** O desktop do coordenador e o
+ * coletor do galpão são máquinas compartilhadas: sem o sufixo, o "somente os
+ * meus" de quem saiu vira o filtro de quem entrou, e a lista aparece curta sem
+ * motivo aparente. Ver `chaveDaPreferencia`.
+ */
+const STORAGE_PREFIXO = 'ellotec_erp_expedicao';
+const PREF_AVANCADOS_ABERTOS = 'filtros_avancados';
+const PREF_STATUS_PEDIDO = 'status_pedido';
+const PREF_EMPRESA = 'empresa';
+const PREF_OPERADOR = 'operador';
+const PREF_SOMENTE_MEUS = 'somente_meus';
+const PREF_POR_PAGINA = 'por_pagina';
 
 /** Opções de itens por página. O teto é 100 porque é o que o backend aceita
  *  (ver `per_page = min(...)` em expedicao_router.py) — pedir mais devolveria
@@ -60,15 +83,6 @@ const OPCOES_POR_PAGINA = [20, 50, 100];
  *  página — com 20 por página, atribuir o dia inteiro vira dezenas de idas e
  *  vindas. */
 const POR_PAGINA_PADRAO = 50;
-
-/** Quantos por página é preferência de uso, como o accordion aberto: quem
- *  trabalha na tela o dia todo não quer reescolher isso toda manhã. */
-const STORAGE_POR_PAGINA = 'ellotec_erp_expedicao_por_pagina';
-
-function lerPorPaginaPersistido(): number {
-  const salvo = Number(localStorage.getItem(STORAGE_POR_PAGINA));
-  return OPCOES_POR_PAGINA.includes(salvo) ? salvo : POR_PAGINA_PADRAO;
-}
 
 /** yyyy-MM-dd, formato que o <input type="date"> lê e que a API espera. */
 function paraCampoData(data: Date): string {
@@ -102,18 +116,6 @@ const ROTULOS_STATUS_PEDIDO: Record<string, string> = {
 
 function rotuloStatusPedido(chave: string): string {
   return ROTULOS_STATUS_PEDIDO[chave] ?? chave;
-}
-
-/** Lê o filtro de status salvo. Blindado contra JSON corrompido e contra
- *  formato antigo: preferência inválida vira "nenhum filtro", nunca um erro
- *  que impede a tela de abrir. */
-function lerStatusPersistido(): string[] {
-  try {
-    const salvo = JSON.parse(localStorage.getItem(STORAGE_STATUS_PEDIDO) ?? '[]');
-    return Array.isArray(salvo) ? salvo.filter((chave) => typeof chave === 'string') : [];
-  } catch {
-    return [];
-  }
 }
 
 interface OpcaoFiltro {
@@ -161,14 +163,17 @@ export class ExpedicaoList implements OnInit {
 
   termoBusca = signal('');
   situacao = signal<FiltroSituacao>('todos');
-  operadorId = signal('');
-  empresaId = signal('');
-  somenteMeus = signal(false);
+
+  // Os quatro filtros avançados nascem do que ficou salvo da última sessão
+  // DESTE usuário. Ver o bloco de preferências no topo do arquivo.
+  operadorId = signal(this.lerTexto(PREF_OPERADOR));
+  empresaId = signal(this.lerTexto(PREF_EMPRESA));
+  somenteMeus = signal(this.lerBooleano(PREF_SOMENTE_MEUS));
 
   /** Chaves do catálogo pedido_status marcadas no multiselect. Vazio = todos.
    *  Vai para o servidor junto com a página (ver carregar): filtrar status na
    *  página já carregada devolveria 3 linhas de 20 e um total que não bate. */
-  statusPedido = signal<string[]>(lerStatusPersistido());
+  statusPedido = signal<string[]>(this.lerLista(PREF_STATUS_PEDIDO));
 
   /**
    * Pedidos marcados no checkbox da primeira coluna. Set, não array: marcar e
@@ -220,29 +225,30 @@ export class ExpedicaoList implements OnInit {
   sort = signal<ColunaOrdenavel>('sync_updated_at');
   sortType = signal<'asc' | 'desc'>('desc');
 
-  porPagina = signal(lerPorPaginaPersistido());
+  porPagina = signal(this.lerPorPagina());
   readonly opcoesPorPagina = OPCOES_POR_PAGINA;
   totalPaginas = computed(() => Math.max(1, Math.ceil(this.total() / this.porPagina())));
 
   /** Se os filtros avançados abrem junto com a tela. É preferência de uso, não
    *  estado de filtro: quem trabalha sempre com o mesmo recorte deixa aberto,
    *  quem usa só a busca deixa fechado — e não quer reabrir todo dia. */
-  avancadosAbertos = signal(this.lerPreferenciaAvancados());
+  avancadosAbertos = signal(this.lerBooleano(PREF_AVANCADOS_ABERTOS));
 
   readonly opcoes = OPCOES;
   readonly numeroExibicao = numeroExibicao;
   readonly rotuloTipo = rotuloTipo;
 
   constructor() {
-    effect(() => {
-      localStorage.setItem(STORAGE_AVANCADOS, this.avancadosAbertos() ? 'aberto' : 'fechado');
-    });
-    effect(() => {
-      localStorage.setItem(STORAGE_STATUS_PEDIDO, JSON.stringify(this.statusPedido()));
-    });
-    effect(() => {
-      localStorage.setItem(STORAGE_POR_PAGINA, String(this.porPagina()));
-    });
+    // Um effect por preferência, e não um que grave tudo junto: assim cada
+    // gravação só acontece quando aquele signal muda. `limparFiltros` não
+    // precisa apagar nada à mão — ele zera os signals e estes effects gravam o
+    // estado zerado, que é o que a pessoa acabou de pedir.
+    effect(() => this.gravar(PREF_AVANCADOS_ABERTOS, this.avancadosAbertos()));
+    effect(() => this.gravar(PREF_STATUS_PEDIDO, this.statusPedido()));
+    effect(() => this.gravar(PREF_EMPRESA, this.empresaId()));
+    effect(() => this.gravar(PREF_OPERADOR, this.operadorId()));
+    effect(() => this.gravar(PREF_SOMENTE_MEUS, this.somenteMeus()));
+    effect(() => this.gravar(PREF_POR_PAGINA, this.porPagina()));
     this.busca$
       .pipe(debounceTime(400), takeUntilDestroyed())
       .subscribe(() => this.carregar(1));
@@ -315,13 +321,39 @@ export class ExpedicaoList implements OnInit {
     // Mesma tolerância do catálogo de status: se o request falhar, o filtro
     // fica vazio e a lista continua servindo.
     this.service.listarEmpresas().subscribe({
-      next: (lista) => this.empresas.set(lista),
+      next: (lista) => {
+        this.empresas.set(lista);
+        this.descartarSeSumiu(this.empresaId, lista.map((empresa) => empresa.id));
+      },
       error: () => this.empresas.set([]),
     });
     this.service.listarOperadoresDoFiltro().subscribe({
-      next: (lista) => this.operadores.set(lista),
+      next: (lista) => {
+        this.operadores.set(lista);
+        this.descartarSeSumiu(this.operadorId, lista.map((operador) => operador.id));
+      },
       error: () => this.operadores.set([]),
     });
+  }
+
+  /**
+   * Joga fora um filtro salvo que aponta para algo que não existe mais — o
+   * operador que saiu da empresa, a filial que foi desativada.
+   *
+   * Sem isto, o filtro continuaria viajando para o servidor e devolvendo lista
+   * vazia, enquanto o `<select>` mostraria em branco (nenhuma `<option>` casa
+   * com o valor). O usuário veria "nenhum pedido encontrado" sem nada marcado
+   * na tela explicando por quê — e o único jeito de sair seria limpar filtros
+   * às cegas.
+   *
+   * Só recarrega quando de fato descartou: o caso normal é o filtro continuar
+   * válido, e um request a mais em toda abertura da tela sairia caro à toa.
+   */
+  private descartarSeSumiu(filtro: WritableSignal<string>, idsValidos: string[]): void {
+    if (filtro() && !idsValidos.includes(filtro())) {
+      filtro.set('');
+      this.carregar(1);
+    }
   }
 
   /** Mudar o tamanho da página volta para a primeira: manter o número da
@@ -490,8 +522,61 @@ export class ExpedicaoList implements OnInit {
     this.carregar(1);
   }
 
-  private lerPreferenciaAvancados(): boolean {
-    return localStorage.getItem(STORAGE_AVANCADOS) === 'aberto';
+  // ---------------------------------------------------------------------
+  // Preferências da tela (localStorage, por usuário)
+  //
+  // Toda leitura é blindada: preferência corrompida, de um formato antigo ou
+  // de um navegador que bloqueia storage vira o padrão da tela, nunca um erro
+  // que impede a listagem de abrir. Filtro salvo não vale o risco de a
+  // expedição não carregar.
+  // ---------------------------------------------------------------------
+
+  /** `<prefixo>_<preferência>_<id do usuário>`.
+   *
+   *  Sem usuário logado (a tela não abre assim, mas o signal é inicializado
+   *  antes de qualquer garantia disso) cai em `anonimo`, um balde à parte que
+   *  não se mistura com o de ninguém. */
+  private chaveDaPreferencia(nome: string): string {
+    return `${STORAGE_PREFIXO}_${nome}_${this.auth.usuario()?.id ?? 'anonimo'}`;
+  }
+
+  private gravar(nome: string, valor: unknown): void {
+    try {
+      localStorage.setItem(this.chaveDaPreferencia(nome), JSON.stringify(valor));
+    } catch {
+      // Storage cheio ou bloqueado pelo navegador. A tela continua funcionando
+      // com o filtro em memória — ele só não sobrevive ao próximo F5.
+    }
+  }
+
+  private ler(nome: string): unknown {
+    try {
+      const salvo = localStorage.getItem(this.chaveDaPreferencia(nome));
+      return salvo === null ? undefined : JSON.parse(salvo);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private lerTexto(nome: string): string {
+    const valor = this.ler(nome);
+    return typeof valor === 'string' ? valor : '';
+  }
+
+  private lerBooleano(nome: string): boolean {
+    return this.ler(nome) === true;
+  }
+
+  private lerLista(nome: string): string[] {
+    const valor = this.ler(nome);
+    return Array.isArray(valor) ? valor.filter((item) => typeof item === 'string') : [];
+  }
+
+  private lerPorPagina(): number {
+    const valor = this.ler(PREF_POR_PAGINA);
+    return typeof valor === 'number' && OPCOES_POR_PAGINA.includes(valor)
+      ? valor
+      : POR_PAGINA_PADRAO;
   }
 
   // ---------------------------------------------------------------------

@@ -32,6 +32,9 @@ from app.domains.expedicao.expedicao_model import (  # noqa: F401
     Separacao,
     SeparacaoItem,
 )
+from app.domains.expedicao_configuracoes.expedicao_configuracao_model import (  # noqa: F401
+    ExpedicaoConfiguracao,
+)
 from app.domains.marcas.marca_model import Marca  # noqa: F401
 from app.domains.notas_fiscais.nota_fiscal_model import NotaFiscal, NotaFiscalItem  # noqa: F401
 from app.domains.pedidos.pedido_model import Pedido, PedidoItem, PedidoStatus  # noqa: F401

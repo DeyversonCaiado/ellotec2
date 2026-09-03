@@ -16,6 +16,9 @@ from app.domains.cotacoes.cotacao_router import router as cotacao_router
 from app.domains.entregas.entrega_router import router as entrega_router
 from app.domains.estoque.estoque_router import router as estoque_router
 from app.domains.expedicao.expedicao_router import router as expedicao_router
+from app.domains.expedicao_configuracoes.expedicao_configuracao_router import (
+    router as expedicao_configuracao_router,
+)
 from app.domains.marcas.marca_router import router as marca_router
 from app.domains.notas_fiscais.nota_fiscal_router import router as nota_fiscal_router
 from app.domains.pedidos.pedido_router import router as pedido_router
@@ -70,6 +73,7 @@ app.include_router(marca_router)
 app.include_router(pedido_router)
 app.include_router(nota_fiscal_router)
 app.include_router(expedicao_router)
+app.include_router(expedicao_configuracao_router)
 app.include_router(entrega_router)
 app.include_router(estoque_router)
 app.include_router(enderecamento_router)
